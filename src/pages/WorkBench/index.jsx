@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { Settings2 } from "lucide-react";
+import { Settings2, Flame, ScrollText, BadgeCheck } from "lucide-react";
 import { INIT_DIMS } from "../../constants/mock-data.js";
 import { PLAN_PHASE, PLAN_RESULT } from "../../constants/status.js";
 import { PRI } from "../../constants/priority.js";
@@ -195,7 +195,7 @@ export default function WorkBench({ plans, setPlans, role }) {
 
       {/* 🔥 进行中 */}
       {active.length > 0 && (
-        <WoSection title="进行中" icon="🔥" count={active.length}>
+        <WoSection title="进行中" icon={<Flame size={15} strokeWidth={1.5} color="#b85c1a" />} count={active.length}>
           {Object.entries(activeByPhase).map(([phase, wos]) =>
             wos.length > 0 && (
               <WoDeskRow key={phase}
@@ -213,7 +213,7 @@ export default function WorkBench({ plans, setPlans, role }) {
 
       {/* 📋 下期规划 */}
       {next.length > 0 && (
-        <WoSection title="下期规划" icon="📋" count={next.length}>
+        <WoSection title="下期规划" icon={<ScrollText size={15} strokeWidth={1.5} color="#3a6a3a" />} count={next.length}>
           {Object.entries(nextByPriority).map(([pri, wos]) =>
             wos.length > 0 && (
               <WoDeskRow key={pri}
@@ -231,7 +231,7 @@ export default function WorkBench({ plans, setPlans, role }) {
 
       {/* ✅ 已完成 */}
       {done.length > 0 && (
-        <WoSection title="已完成" icon="✅" count={done.length} collapsible defaultCollapsed>
+        <WoSection title="已完成" icon={<BadgeCheck size={15} strokeWidth={1.5} color="#5a4a30" />} count={done.length} collapsible defaultCollapsed>
           {Object.entries(doneByResult).map(([result, wos]) =>
             wos.length > 0 && (
               <WoDeskRow key={result}
