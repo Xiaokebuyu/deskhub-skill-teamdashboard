@@ -146,6 +146,7 @@ export default function WorkBench({ plans, setPlans, role }) {
   const save = () => {
     if (fMode === "create") {
       ops.addPlan(fData);
+      closeForm();
     } else if (fMode === "addVar" && fData.planId) {
       ops.addVariant(fData.planId, fData);
       if (fullWo && fullWo.id === fData.planId) {
@@ -154,11 +155,13 @@ export default function WorkBench({ plans, setPlans, role }) {
           if (latest) setFullWo({ ...latest });
         }, 50);
       }
+      closeForm();
     } else if (fMode === "complete" && fData.planId) {
       ops.completePlan(fData.planId, fData.result);
-      handleCloseFull();
+      // 串行关闭：先关 formUI，完全消失后再关 FullPanel
+      closeForm();
+      setTimeout(() => handleCloseFull(), 500);
     }
-    closeForm();
   };
 
   // 维度管理
@@ -251,39 +254,41 @@ export default function WorkBench({ plans, setPlans, role }) {
               </div>
 
               {/* 采纳时：方案排名 + 选择 */}
-              {fData.result === "adopted" && fData.variants && fData.variants.length > 0 && <>
-                <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>选定采纳方案</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-                  {fData.variants.map((v, i) => (
-                    <div key={v.id} onClick={() => setFData(p => ({ ...p, selectedVariantId: v.id }))}
-                      style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "10px 12px", borderRadius: 8, cursor: "pointer",
-                        border: fData.selectedVariantId === v.id ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.06)",
-                        background: fData.selectedVariantId === v.id ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.01)",
-                        transition: "all 0.15s",
-                      }}>
-                      <div>
-                        <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", fontWeight: 500 }}>
-                          {i === 0 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥇</span>}
-                          {i === 1 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥈</span>}
-                          {i === 2 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥉</span>}
-                          {v.name}
+              {fData.result === "adopted" && Array.isArray(fData.variants) && fData.variants.length > 0 && (
+                <div>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>选定采纳方案</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                    {fData.variants.map((v, i) => (
+                      <div key={v.id || i} onClick={() => setFData(p => ({ ...p, selectedVariantId: v.id }))}
+                        style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                          border: fData.selectedVariantId === v.id ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.06)",
+                          background: fData.selectedVariantId === v.id ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.01)",
+                          transition: "all 0.15s",
+                        }}>
+                        <div>
+                          <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", fontWeight: 500 }}>
+                            {i === 0 && v.avg > 0 && "🥇 "}
+                            {i === 1 && v.avg > 0 && "🥈 "}
+                            {i === 2 && v.avg > 0 && "🥉 "}
+                            {v.name || "未命名"}
+                          </div>
+                          <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888", marginTop: 2 }}>
+                            {v.uploader || ""} {v.uploaded ? `· ${v.uploaded}` : ""}
+                          </div>
                         </div>
-                        <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888", marginTop: 2 }}>
-                          {v.uploader} · {v.uploaded}
+                        <div style={{
+                          fontFamily: FONT_MONO, fontSize: 15, fontWeight: 600,
+                          color: v.avg > 0 ? (i === 0 ? "#8a6a3a" : "#3a2a18") : "#c4bfb5",
+                        }}>
+                          {typeof v.avg === "number" && v.avg > 0 ? v.avg.toFixed(1) : "—"}
                         </div>
                       </div>
-                      <div style={{
-                        fontFamily: FONT_MONO, fontSize: 15, fontWeight: 600,
-                        color: v.avg > 0 ? (i === 0 ? "#8a6a3a" : "#3a2a18") : "#c4bfb5",
-                      }}>
-                        {v.avg > 0 ? v.avg.toFixed(1) : "—"}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </>}
+              )}
             </>}
           </div>
 
