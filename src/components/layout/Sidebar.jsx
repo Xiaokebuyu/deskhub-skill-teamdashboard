@@ -173,7 +173,7 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
             })}
           </div>
         )}
-        {/* 当前角色 + 维度设置 */}
+        {/* 当前角色 */}
         <div style={{ display: "flex", alignItems: "center" }}>
           <button onClick={() => setRoleOpen(o => !o)} style={{
             display: "flex", alignItems: "center", flex: 1,
@@ -199,16 +199,18 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
               {!collapsed && <ChevronUp size={12} style={{ color: "#a09888", flexShrink: 0, transform: roleOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />}
             </>); })()}
           </button>
-          {/* 维度设置齿轮 */}
+          {/* 维度设置 — 角色栏右侧常驻按钮 */}
           {onOpenDimMgr && !collapsed && (
-            <div onClick={onOpenDimMgr} title="评分维度设置" style={{
-              width: 28, height: 28, borderRadius: 7, marginRight: 10,
+            <div onClick={e => { e.stopPropagation(); onOpenDimMgr(); }} title="评分维度设置" style={{
+              width: 30, height: 30, borderRadius: 8, marginRight: 8,
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer", color: "#a09888",
-              transition: "all 0.15s",
+              background: "rgba(0,0,0,0.03)",
+              border: "1px solid rgba(0,0,0,0.05)",
+              transition: "all 0.15s", flexShrink: 0,
             }}
-              onMouseEnter={e => { e.currentTarget.style.color = "#3a2a18"; e.currentTarget.style.background = "rgba(0,0,0,0.05)"; }}
-              onMouseLeave={e => { e.currentTarget.style.color = "#a09888"; e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={e => { e.currentTarget.style.color = "#3a2a18"; e.currentTarget.style.background = "rgba(0,0,0,0.07)"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "#a09888"; e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
             >
               <Settings2 size={14} strokeWidth={1.5} />
             </div>
