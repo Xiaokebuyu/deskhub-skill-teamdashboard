@@ -66,7 +66,7 @@ export default function Dashboard() {
       </div>
 
       {/* 数据洞察 — 图表轮播（选择栏在内部） */}
-      <ChartCarousel tabs={CHART_TABS} height={260} />
+      <ChartCarousel tabs={CHART_TABS} minHeight={240} />
 
       {/* 热门技能 — 加权综合排名 Top 7 */}
       <DeskRow

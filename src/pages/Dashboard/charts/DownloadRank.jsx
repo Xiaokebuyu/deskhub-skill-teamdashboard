@@ -12,9 +12,9 @@ const COLORS = ["#b85c1a", "#c4763a", "#d4905a", "#d4a87a", "#c4b89a", "#b0a890"
 
 export default function DownloadRank() {
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div style={{ width: "100%" }}>
       <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 8 }}>下载量 Top 10</div>
-      <ResponsiveContainer width="100%" height="90%">
+      <ResponsiveContainer width="100%" height={260}>
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
           <XAxis type="number" tick={{ fontSize: 11, fill: "#a09888" }} axisLine={{ stroke: "rgba(0,0,0,0.08)" }} />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#5a5550" }} width={72} axisLine={false} tickLine={false} />

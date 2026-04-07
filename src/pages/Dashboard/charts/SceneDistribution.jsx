@@ -18,7 +18,7 @@ const SRC_COLORS = ["#8a6a3a", "#5a8a5a", "#7a6a9a"];
 
 export default function SceneDistribution() {
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", gap: 20 }}>
+    <div style={{ width: "100%", height: 220, display: "flex", gap: 20 }}>
       {/* 类型分布 */}
       <div style={{ flex: 1 }}>
         <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 4, textAlign: "center" }}>类型分布</div>

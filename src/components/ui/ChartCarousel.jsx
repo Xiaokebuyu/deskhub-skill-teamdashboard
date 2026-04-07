@@ -1,13 +1,26 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import ToggleSwitch from "./ToggleSwitch.jsx";
 
 /**
- * 图表轮播容器 — 选择栏在 desk row 内部顶栏，内容区水平滑动过渡
+ * 图表轮播容器 — 选择栏在内部顶栏，高度自适应内容
+ * 切换时用 opacity + translateY 过渡，每个 tab 高度由内容决定
  */
-export default function ChartCarousel({ tabs, height = 280 }) {
+export default function ChartCarousel({ tabs, minHeight = 200 }) {
   const [activeId, setActiveId] = useState(tabs[0]?.id);
-  const activeIdx = tabs.findIndex(t => t.id === activeId);
-  const containerRef = useRef(null);
+  const [displayId, setDisplayId] = useState(tabs[0]?.id);
+  const [fading, setFading] = useState(false);
+
+  const handleChange = (id) => {
+    if (id === activeId) return;
+    setFading(true);
+    setTimeout(() => {
+      setDisplayId(id);
+      setActiveId(id);
+      requestAnimationFrame(() => setFading(false));
+    }, 200);
+  };
+
+  const activeTab = tabs.find(t => t.id === displayId);
 
   return (
     <div style={{
@@ -24,34 +37,20 @@ export default function ChartCarousel({ tabs, height = 280 }) {
         <ToggleSwitch
           options={tabs.map(t => ({ id: t.id, label: t.label }))}
           value={activeId}
-          onChange={setActiveId}
+          onChange={handleChange}
           width={Math.max(280, tabs.length * 90)}
         />
       </div>
 
-      {/* 内容区 — 水平滑动 */}
-      <div
-        ref={containerRef}
-        style={{
-          display: "flex",
-          width: `${tabs.length * 100}%`,
-          transform: `translateX(-${activeIdx * (100 / tabs.length)}%)`,
-          transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
-        }}
-      >
-        {tabs.map(tab => (
-          <div key={tab.id} style={{
-            width: `${100 / tabs.length}%`,
-            flexShrink: 0,
-            height,
-            padding: "8px 20px 16px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}>
-            {tab.content}
-          </div>
-        ))}
+      {/* 内容区 — opacity 过渡，高度自适应 */}
+      <div style={{
+        padding: "8px 20px 16px",
+        minHeight,
+        opacity: fading ? 0 : 1,
+        transform: fading ? "translateY(8px)" : "translateY(0)",
+        transition: "opacity 0.2s ease, transform 0.2s ease",
+      }}>
+        {activeTab?.content}
       </div>
     </div>
   );
