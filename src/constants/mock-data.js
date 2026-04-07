@@ -262,12 +262,30 @@ export const INIT_PLANS = [
 ];
 
 export const MCPS = [
-  { id: "m1", name: "文件读写", slug: "file-rw", status: "stable", ver: "v1.3.0", desc: "本地文件的读取、写入、追加操作", updated: "03-28", maintainer: "笑不语" },
-  { id: "m2", name: "浏览器操作", slug: "browser-ctrl", status: "stable", ver: "v1.1.0", desc: "网页截图、表单填写、页面导航", updated: "03-25", maintainer: "小东" },
-  { id: "m3", name: "数据库查询", slug: "db-query", status: "iterating", ver: "v0.8.0", desc: "PostgreSQL/MySQL 数据库连接与查询", updated: "04-03", maintainer: "笑不语" },
-  { id: "m4", name: "邮件发送", slug: "email-send", status: "iterating", ver: "v0.5.1", desc: "SMTP邮件发送与模板管理", updated: "04-01", maintainer: "小东" },
-  { id: "m5", name: "OCR识别", slug: "ocr", status: "planned", ver: "v0.1.0", desc: "图片文字识别，支持多语种", updated: "03-30", maintainer: "待定" },
-  { id: "m6", name: "语音合成", slug: "tts", status: "planned", ver: "v0.1.0", desc: "文字转语音，多角色多语种", updated: "04-02", maintainer: "待定" },
+  { id: "m1", name: "文件读写", slug: "file-rw", status: "stable", ver: "v1.3.0", desc: "本地文件的读取、写入、追加操作", updated: "03-28", maintainer: "笑不语",
+    calls: 12840, successRate: 99.2, avgResponseTime: 0.3, callTrend: [1800, 1920, 1850, 2010, 1960, 2100, 2200],
+    dependSkills: ["PPT 生成", "办公套件", "文件转换", "表格处理"],
+  },
+  { id: "m2", name: "浏览器操作", slug: "browser-ctrl", status: "stable", ver: "v1.1.0", desc: "网页截图、表单填写、页面导航", updated: "03-25", maintainer: "小东",
+    calls: 5620, successRate: 94.8, avgResponseTime: 2.8, callTrend: [750, 820, 780, 860, 810, 900, 870],
+    dependSkills: ["网页摘要", "智能客服"],
+  },
+  { id: "m3", name: "数据库查询", slug: "db-query", status: "iterating", ver: "v0.8.0", desc: "PostgreSQL/MySQL 数据库连接与查询", updated: "04-03", maintainer: "笑不语",
+    calls: 3210, successRate: 87.5, avgResponseTime: 1.5, callTrend: [380, 420, 450, 490, 460, 520, 540],
+    dependSkills: ["数据分析", "周报生成"],
+  },
+  { id: "m4", name: "邮件发送", slug: "email-send", status: "iterating", ver: "v0.5.1", desc: "SMTP邮件发送与模板管理", updated: "04-01", maintainer: "小东",
+    calls: 1890, successRate: 91.3, avgResponseTime: 3.2, callTrend: [240, 260, 280, 310, 290, 320, 340],
+    dependSkills: ["邮件撰写"],
+  },
+  { id: "m5", name: "OCR识别", slug: "ocr", status: "planned", ver: "v0.1.0", desc: "图片文字识别，支持多语种", updated: "03-30", maintainer: "待定",
+    calls: 0, successRate: 0, avgResponseTime: 0, callTrend: [0, 0, 0, 0, 0, 0, 0],
+    dependSkills: [],
+  },
+  { id: "m6", name: "语音合成", slug: "tts", status: "planned", ver: "v0.1.0", desc: "文字转语音，多角色多语种", updated: "04-02", maintainer: "待定",
+    calls: 0, successRate: 0, avgResponseTime: 0, callTrend: [0, 0, 0, 0, 0, 0, 0],
+    dependSkills: [],
+  },
 ];
 
 // 评测维度 — 十分制

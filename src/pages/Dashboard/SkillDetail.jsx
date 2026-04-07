@@ -2,8 +2,10 @@ import { ST } from "../../constants/status.js";
 import { INIT_PLANS } from "../../constants/mock-data.js";
 import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
 import { SIcon } from "../../components/ui/Icons.jsx";
-import { TrendingUp, TrendingDown, Minus, GitCommit, ClipboardList } from "lucide-react";
+import { GitCommit, ClipboardList } from "lucide-react";
 import DetailModal from "../../components/ui/DetailModal.jsx";
+import DataCard from "../../components/ui/DataCard.jsx";
+import MiniBar from "../../components/ui/MiniBar.jsx";
 
 export default function SkillDetail({ sk, onClose, show }) {
   if (!sk) return null;
@@ -114,38 +116,3 @@ export default function SkillDetail({ sk, onClose, show }) {
   );
 }
 
-/** 数据指标小卡片 */
-function DataCard({ label, value, trend, warn }) {
-  return (
-    <div style={{
-      flex: 1, minWidth: 60, borderRadius: 8, padding: "8px 10px",
-      background: warn ? "rgba(184,58,42,0.06)" : "rgba(0,0,0,0.03)",
-    }}>
-      <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: "#a09888", marginBottom: 3 }}>{label}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <span style={{ fontFamily: FONT_MONO, fontSize: 15, color: warn ? "#b83a2a" : "#3a2a18", fontWeight: 500 }}>{value}</span>
-        {trend === "up" && <TrendingUp size={12} color="#4a8a4a" />}
-        {trend === "down" && <TrendingDown size={12} color="#b83a2a" />}
-        {trend === "flat" && <Minus size={12} color="#a09888" />}
-      </div>
-    </div>
-  );
-}
-
-/** 迷你柱状图 — 纯 CSS，不依赖 recharts */
-function MiniBar({ data, color }) {
-  const max = Math.max(...data, 1);
-  return (
-    <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 36 }}>
-      {data.map((v, i) => (
-        <div key={i} style={{
-          flex: 1, borderRadius: 2,
-          height: `${(v / max) * 100}%`,
-          background: i >= data.length - 3 ? color : color + "60",
-          transition: "height 0.4s ease",
-          minHeight: 2,
-        }} />
-      ))}
-    </div>
-  );
-}
