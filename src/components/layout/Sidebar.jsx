@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronUp, BadgeCheck } from "lucide-react";
+import { ChevronLeft, ChevronUp, BadgeCheck, Settings2 } from "lucide-react";
 import { TABS } from "../../constants/tabs.js";
 import { ROLES } from "../../constants/roles.js";
 import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
 
-export default function Sidebar({ tab, setTab, role, setRole, collapsed, setCollapsed, onResetBrowse }) {
+export default function Sidebar({ tab, setTab, role, setRole, collapsed, setCollapsed, onResetBrowse, onOpenDimMgr }) {
   const [roleOpen, setRoleOpen] = useState(false);
 
   return (
@@ -173,31 +173,47 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
             })}
           </div>
         )}
-        {/* 当前角色显示 */}
-        <button onClick={() => setRoleOpen(o => !o)} style={{
-          display: "flex", alignItems: "center", width: "100%",
-          padding: "12px 12px", background: "none", border: "none", cursor: "pointer",
-          justifyContent: "flex-start", gap: 8,
-        }}>
-          {(() => { const cr = ROLES.find(r => r.id === role); return (<>
-            <div style={{
-              width: 34, height: 34, borderRadius: "50%",
-              background: cr.color, color: "#fff",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0, boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
-              transition: "background 0.3s",
-            }}>
-              <cr.Icon size={15} strokeWidth={2} />
-            </div>
-            {!collapsed && (
-              <div style={{ flex: 1, textAlign: "left", minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 13, fontWeight: 600, color: "#2d2418", whiteSpace: "nowrap" }}>{cr.label}</div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: "#a09888", whiteSpace: "nowrap" }}>{cr.desc}</div>
+        {/* 当前角色 + 维度设置 */}
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <button onClick={() => setRoleOpen(o => !o)} style={{
+            display: "flex", alignItems: "center", flex: 1,
+            padding: "12px 12px", background: "none", border: "none", cursor: "pointer",
+            justifyContent: "flex-start", gap: 8,
+          }}>
+            {(() => { const cr = ROLES.find(r => r.id === role); return (<>
+              <div style={{
+                width: 34, height: 34, borderRadius: "50%",
+                background: cr.color, color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0, boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+                transition: "background 0.3s",
+              }}>
+                <cr.Icon size={15} strokeWidth={2} />
               </div>
-            )}
-            {!collapsed && <ChevronUp size={12} style={{ color: "#a09888", flexShrink: 0, transform: roleOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />}
-          </>); })()}
-        </button>
+              {!collapsed && (
+                <div style={{ flex: 1, textAlign: "left", minWidth: 0, overflow: "hidden" }}>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 13, fontWeight: 600, color: "#2d2418", whiteSpace: "nowrap" }}>{cr.label}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: "#a09888", whiteSpace: "nowrap" }}>{cr.desc}</div>
+                </div>
+              )}
+              {!collapsed && <ChevronUp size={12} style={{ color: "#a09888", flexShrink: 0, transform: roleOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />}
+            </>); })()}
+          </button>
+          {/* 维度设置齿轮 */}
+          {onOpenDimMgr && !collapsed && (
+            <div onClick={onOpenDimMgr} title="评分维度设置" style={{
+              width: 28, height: 28, borderRadius: 7, marginRight: 10,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: "#a09888",
+              transition: "all 0.15s",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.color = "#3a2a18"; e.currentTarget.style.background = "rgba(0,0,0,0.05)"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "#a09888"; e.currentTarget.style.background = "transparent"; }}
+            >
+              <Settings2 size={14} strokeWidth={1.5} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

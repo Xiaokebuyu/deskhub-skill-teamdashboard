@@ -1,14 +1,14 @@
 import { useState, useCallback, useMemo, useRef } from "react";
-import { Settings2, Flame, ScrollText, BadgeCheck } from "lucide-react";
-import { INIT_DIMS } from "../../constants/mock-data.js";
+import { Flame, ScrollText, BadgeCheck } from "lucide-react";
+import { INIT_DIMS, SKILLS } from "../../constants/mock-data.js";
 import { PLAN_PHASE, PLAN_RESULT } from "../../constants/status.js";
 import { PRI } from "../../constants/priority.js";
-import { FONT_SANS } from "../../constants/theme.js";
+import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
 import { getPhase, avgScore } from "../../utils/helpers.js";
 import { nDid } from "../../utils/helpers.js";
 import Stat from "../../components/ui/Stat.jsx";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.jsx";
-import { FormModal, FInput, FSelect, FBtn } from "../../components/ui/Form.jsx";
+import { FInput, FSelect } from "../../components/ui/Form.jsx";
 import WoSection from "./WoSection.jsx";
 import WoDeskRow from "./WoDeskRow.jsx";
 import WoBrowse from "./WoBrowse.jsx";
@@ -22,14 +22,12 @@ const TYPE_OPTIONS = [
   { id: "mcp", label: "MCP" },
 ];
 
-export default function WorkBench({ plans, setPlans, role }) {
+export default function WorkBench({ plans, setPlans, role, dims, setDims, showDimMgr, setShowDimMgr }) {
   const [typeFilter, setTypeFilter] = useState("skill");
-  const [dims, setDims] = useState(INIT_DIMS);
   const [fMode, setFMode] = useState(null);
   const [fData, setFData] = useState({});
   const [showForm, setShowForm] = useState(false);
   const [browseSection, setBrowseSection] = useState(null);
-  const [showDimMgr, setShowDimMgr] = useState(false);
   const [newDim, setNewDim] = useState("");
 
   // 第三层 FullPanel 状态
@@ -126,14 +124,21 @@ export default function WorkBench({ plans, setPlans, role }) {
     setShowScorePanel(false);
   };
 
-  // 表单操作
-  const openForm = (mode, data) => { setFMode(mode); setFData(data); setShowForm(true); };
+  // 表单操作 — mount 后下一帧再展开，确保入场动画生效
+  const openForm = (mode, data) => {
+    setFMode(mode);
+    setFData(data);
+    requestAnimationFrame(() => requestAnimationFrame(() => setShowForm(true)));
+  };
   const closeForm = () => {
     setShowForm(false);
     setTimeout(() => { setFMode(null); setFData({}); }, 400);
   };
 
-  const openCreate = () => openForm("create", { name: "", type: typeFilter, status: "next", priority: "medium", desc: "" });
+  const openCreate = () => openForm("create", {
+    name: "", type: typeFilter, status: "next", priority: "medium", desc: "",
+    deadline: "", owner: "", relatedSkill: "", attachment: "",
+  });
   const openAddVar = (wo) => openForm("addVar", { planId: wo.id, name: "", uploader: "", desc: "", link: "" });
   const openMarkComplete = (wo) => {
     const activeDimsLocal = dims.filter(d => d.active);
@@ -203,7 +208,7 @@ export default function WorkBench({ plans, setPlans, role }) {
         pointerEvents: showForm ? "auto" : "none",
       }}>
         <div onClick={e => e.stopPropagation()} style={{
-          width: fMode === "complete" ? 400 : 380,
+          width: fMode === "create" ? 440 : fMode === "complete" ? 400 : 380,
           background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
           border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
           boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
@@ -222,9 +227,36 @@ export default function WorkBench({ plans, setPlans, role }) {
           <div style={{ padding: "16px 20px" }}>
             {fMode === "create" && <>
               <FInput label="工单名称" value={fData.name} onChange={e => setFData(p => ({ ...p, name: e.target.value }))} placeholder="如 PPT生成优化" />
-              <FSelect label="类型" value={fData.type} onChange={v => setFData(p => ({ ...p, type: v }))} options={[{ v: "skill", l: "Skill" }, { v: "mcp", l: "MCP" }]} />
-              <FSelect label="优先级" value={fData.priority} onChange={v => setFData(p => ({ ...p, priority: v }))} options={[{ v: "high", l: "高", c: "#b83a2a" }, { v: "medium", l: "中", c: "#b8861a" }, { v: "low", l: "低", c: "#5a8a5a" }]} />
-              <FInput label="描述" value={fData.desc} onChange={e => setFData(p => ({ ...p, desc: e.target.value }))} multiline />
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}><FSelect label="类型" value={fData.type} onChange={v => setFData(p => ({ ...p, type: v }))} options={[{ v: "skill", l: "Skill" }, { v: "mcp", l: "MCP" }]} /></div>
+                <div style={{ flex: 1 }}><FSelect label="优先级" value={fData.priority} onChange={v => setFData(p => ({ ...p, priority: v }))} options={[{ v: "high", l: "高", c: "#b83a2a" }, { v: "medium", l: "中", c: "#b8861a" }, { v: "low", l: "低", c: "#5a8a5a" }]} /></div>
+              </div>
+              <FInput label="描述" value={fData.desc} onChange={e => setFData(p => ({ ...p, desc: e.target.value }))} placeholder="目标和要求说明" multiline />
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}><FInput label="负责人" value={fData.owner} onChange={e => setFData(p => ({ ...p, owner: e.target.value }))} placeholder="发起人姓名" /></div>
+                <div style={{ flex: 1 }}><FInput label="截止日期" value={fData.deadline} onChange={e => setFData(p => ({ ...p, deadline: e.target.value }))} placeholder="如 04-30" /></div>
+              </div>
+              {/* 关联技能选择 */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 6 }}>关联技能</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {SKILLS.slice(0, 8).map(sk => (
+                    <div key={sk.slug} onClick={() => setFData(p => ({ ...p, relatedSkill: p.relatedSkill === sk.slug ? "" : sk.slug }))}
+                      style={{
+                        padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                        fontSize: 12, fontFamily: FONT_SANS,
+                        border: fData.relatedSkill === sk.slug ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.08)",
+                        background: fData.relatedSkill === sk.slug ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.02)",
+                        color: fData.relatedSkill === sk.slug ? "#3a2a18" : "#8a7a62",
+                        transition: "all 0.15s",
+                      }}>
+                      {sk.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* 初始附件/参考 */}
+              <FInput label="参考资料" value={fData.attachment} onChange={e => setFData(p => ({ ...p, attachment: e.target.value }))} placeholder="思路文档、参考方案链接（选填）" />
             </>}
             {fMode === "addVar" && <>
               <FInput label="方案名称" value={fData.name} onChange={e => setFData(p => ({ ...p, name: e.target.value }))} placeholder="如 NotebookLM 方案" />
@@ -319,9 +351,18 @@ export default function WorkBench({ plans, setPlans, role }) {
         <ToggleSwitch options={TYPE_OPTIONS} value={typeFilter} onChange={setTypeFilter} />
         <div style={{ flex: 1 }} />
         {role === "admin" && (
-          <div onClick={() => setShowDimMgr(true)} style={{ background: "rgba(0,0,0,0.03)", borderRadius: 8, padding: "6px 12px", border: "1px dashed rgba(0,0,0,0.08)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.06)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"}>
-            <Settings2 size={13} /><span style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#a09888" }}>维度</span>
+          <div onClick={openCreate} style={{
+            padding: "7px 16px", borderRadius: 8, cursor: "pointer",
+            fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500,
+            background: "#2d2418", color: "#f5f0e8",
+            border: "1px solid #2d2418",
+            display: "flex", alignItems: "center", gap: 4,
+            transition: "all 0.15s",
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = "#3d3428"}
+            onMouseLeave={e => e.currentTarget.style.background = "#2d2418"}
+          >
+            <span style={{ fontSize: 14 }}>+</span>新建工单
           </div>
         )}
       </div>
@@ -332,12 +373,6 @@ export default function WorkBench({ plans, setPlans, role }) {
         <Stat label="进行中" value={active.length} color="#b85c1a" />
         <Stat label="下期规划" value={next.length} color="#3a6a3a" />
         <Stat label="总方案" value={filtered.reduce((a, p) => a + p.variants.length, 0)} color="#8a8580" />
-        {role === "admin" && (
-          <div onClick={openCreate} style={{ background: "rgba(0,0,0,0.03)", borderRadius: 10, padding: "8px 14px", border: "1px dashed rgba(0,0,0,0.08)", textAlign: "center", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.06)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"}>
-            <span style={{ fontSize: 16 }}>+</span><span style={{ fontFamily: FONT_SANS, fontSize: 15, color: "#a09888" }}>新建工单</span>
-          </div>
-        )}
       </div>
 
       {/* 🔥 进行中 */}
@@ -416,31 +451,51 @@ export default function WorkBench({ plans, setPlans, role }) {
       {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
       {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
 
-      {/* 维度管理 */}
+      {/* 维度管理 — z-800 弹窗，带展开/收起动画 */}
       {showDimMgr && (
-        <FormModal title="管理评分维度" show={true} onClose={() => setShowDimMgr(false)}>
-          {dims.map(d => (
-            <div key={d.id} style={{ padding: "8px 0", borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: 15, color: "#3a2a18", background: "transparent", border: "none", borderBottom: "1px dashed rgba(0,0,0,0.08)", outline: "none", padding: "0 0 2px", width: 100 }} />
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <button onClick={() => toggleDim(d.id)} style={{ padding: "2px 8px", borderRadius: 4, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, border: d.active ? "1px solid rgba(74,138,74,0.4)" : "1px solid rgba(0,0,0,0.06)", background: d.active ? "rgba(74,138,74,0.12)" : "rgba(0,0,0,0.05)", color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用中" : "已禁用"}</button>
-                  <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, color: "#b83a2a" }}>删除</button>
+        <div onClick={() => setShowDimMgr(false)} style={{
+          position: "fixed", inset: 0, zIndex: 800,
+          background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          opacity: showDimMgr ? 1 : 0, transition: "opacity 0.3s",
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: 360,
+            background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+            border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
+            boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
+            overflow: "hidden",
+            transform: "scale(1) translateY(0)",
+            transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
+          }}>
+            <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 600, color: "#3a2a18" }}>评分维度设置</div>
+            </div>
+            <div style={{ padding: "12px 20px", maxHeight: "60vh", overflow: "auto" }}>
+              {dims.map(d => (
+                <div key={d.id} style={{ padding: "10px 0", borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45, transition: "opacity 0.15s" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#3a2a18", background: "transparent", border: "none", borderBottom: "1px dashed rgba(0,0,0,0.08)", outline: "none", padding: "0 0 2px", width: 100 }} />
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <button onClick={() => toggleDim(d.id)} style={{ padding: "3px 10px", borderRadius: 6, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, border: d.active ? "1px solid rgba(74,138,74,0.3)" : "1px solid rgba(0,0,0,0.06)", background: d.active ? "rgba(74,138,74,0.1)" : "rgba(0,0,0,0.04)", color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用" : "禁用"}</button>
+                      <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, color: "#b83a2a" }}>删除</button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#9a8a68" }}>满分</span>
+                    {[3, 5, 10].map(n => (
+                      <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: "2px 8px", borderRadius: 5, cursor: "pointer", fontFamily: FONT_MONO, fontSize: 12, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : "1px solid rgba(0,0,0,0.06)", background: d.max === n ? "rgba(0,0,0,0.08)" : "transparent", color: "#4a4540", transition: "all 0.15s" }}>{n}</button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#9a8a68" }}>满分</span>
-                {[3, 5, 10].map(n => (
-                  <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: "1px 6px", borderRadius: 4, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : "1px solid rgba(0,0,0,0.06)", background: d.max === n ? "rgba(0,0,0,0.08)" : "transparent", color: "#4a4540" }}>{n}</button>
-                ))}
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: "8px 12px", background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 8, fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", outline: "none" }} />
+                <button onClick={addDim} style={{ padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500, background: "#2d2418", color: "#f5f0e8", border: "1px solid #2d2418", transition: "all 0.15s" }}>添加</button>
               </div>
             </div>
-          ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: "6px 10px", background: "rgba(255,255,255,0.4)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 6, fontFamily: FONT_SANS, fontSize: 14, color: "#3a2a18", outline: "none" }} />
-            <FBtn label="添加" onClick={addDim} />
           </div>
-        </FormModal>
+        </div>
       )}
     </div>
   );
