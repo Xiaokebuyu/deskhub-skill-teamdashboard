@@ -8,14 +8,21 @@ import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
  * 渲染 markdown 格式的方案文档内容
  */
 export default function DocReader({ show, onClose, title, content }) {
+  const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (show) requestAnimationFrame(() => setVisible(true));
-    else setVisible(false);
+    if (show) {
+      setMounted(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
+    } else if (mounted) {
+      setVisible(false);
+      const t = setTimeout(() => setMounted(false), 400);
+      return () => clearTimeout(t);
+    }
   }, [show]);
 
-  if (!show && !visible) return null;
+  if (!mounted) return null;
 
   return (
     <div onClick={onClose} style={{

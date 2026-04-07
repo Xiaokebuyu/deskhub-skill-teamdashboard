@@ -4,7 +4,7 @@ import { INIT_DIMS } from "../../constants/mock-data.js";
 import { PLAN_PHASE, PLAN_RESULT } from "../../constants/status.js";
 import { PRI } from "../../constants/priority.js";
 import { FONT_SANS } from "../../constants/theme.js";
-import { getPhase } from "../../utils/helpers.js";
+import { getPhase, avgScore } from "../../utils/helpers.js";
 import { nDid } from "../../utils/helpers.js";
 import Stat from "../../components/ui/Stat.jsx";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.jsx";
@@ -38,6 +38,7 @@ export default function WorkBench({ plans, setPlans, role }) {
 
   // DocReader + ScorePanel 状态
   const [docReaderData, setDocReaderData] = useState(null);
+  const [showDocReader, setShowDocReader] = useState(false);
   const [showScorePanel, setShowScorePanel] = useState(false);
 
   const ops = useWorkOrders(plans, setPlans);
@@ -102,9 +103,15 @@ export default function WorkBench({ plans, setPlans, role }) {
 
   // DocReader
   const openDocReader = (variant) => {
-    if (variant.content) setDocReaderData({ title: variant.name, content: variant.content });
+    if (variant.content) {
+      setDocReaderData({ title: variant.name, content: variant.content });
+      setShowDocReader(true);
+    }
   };
-  const closeDocReader = () => setDocReaderData(null);
+  const closeDocReader = () => {
+    setShowDocReader(false);
+    setTimeout(() => setDocReaderData(null), 450);
+  };
 
   // ScorePanel
   const openScorePanel = () => setShowScorePanel(true);
@@ -128,8 +135,12 @@ export default function WorkBench({ plans, setPlans, role }) {
     setFData({ planId: wo.id, name: "", uploader: "", desc: "", link: "" });
   };
   const openMarkComplete = (wo) => {
+    // 自动选中评分最高的方案，但管理员可以改
+    const activeDimsLocal = dims.filter(d => d.active);
+    const ranked = [...wo.variants].map(v => ({ ...v, avg: avgScore(v, activeDimsLocal) })).sort((a, b) => b.avg - a.avg);
+    const topVariant = ranked.find(v => v.avg > 0);
     setFMode("complete");
-    setFData({ planId: wo.id, result: "adopted" });
+    setFData({ planId: wo.id, result: "adopted", selectedVariantId: topVariant?.id || null, variants: ranked });
   };
 
   const save = () => {
@@ -170,7 +181,7 @@ export default function WorkBench({ plans, setPlans, role }) {
           role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
           onOpenScorePanel={openScorePanel} onOpenDocReader={openDocReader} />
         {formUI()}
-        {docReaderData && <DocReader show={true} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
+        {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
         {showScorePanel && fullWo && <ScorePanel show={true} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
       </>
     );
@@ -189,7 +200,7 @@ export default function WorkBench({ plans, setPlans, role }) {
         opacity: 1, transition: "opacity 0.3s",
       }}>
         <div onClick={e => e.stopPropagation()} style={{
-          width: fMode === "complete" ? 320 : 380,
+          width: fMode === "complete" ? 400 : 380,
           background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
           border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
           boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
@@ -219,12 +230,11 @@ export default function WorkBench({ plans, setPlans, role }) {
               <FInput label="文件/链接" value={fData.link} onChange={e => setFData(p => ({ ...p, link: e.target.value }))} placeholder="方案文档地址（选填）" />
             </>}
             {fMode === "complete" && <>
-              <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#5a5550", marginBottom: 12, lineHeight: 1.5 }}>
-                确认定稿后，工单将移至已完成区。请选择结论：
-              </div>
-              <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              {/* 结论选择 */}
+              <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>定稿结论</div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
                 {[
-                  { v: "adopted", l: "采纳方案", desc: "选定最优方案，内置上线" },
+                  { v: "adopted", l: "采纳方案", desc: "选定方案，内置上线" },
                   { v: "shelved", l: "搁置", desc: "暂不推进，保留记录" },
                 ].map(o => (
                   <div key={o.v} onClick={() => setFData(p => ({ ...p, result: o.v }))}
@@ -239,6 +249,41 @@ export default function WorkBench({ plans, setPlans, role }) {
                   </div>
                 ))}
               </div>
+
+              {/* 采纳时：方案排名 + 选择 */}
+              {fData.result === "adopted" && fData.variants && fData.variants.length > 0 && <>
+                <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>选定采纳方案</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                  {fData.variants.map((v, i) => (
+                    <div key={v.id} onClick={() => setFData(p => ({ ...p, selectedVariantId: v.id }))}
+                      style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                        border: fData.selectedVariantId === v.id ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.06)",
+                        background: fData.selectedVariantId === v.id ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.01)",
+                        transition: "all 0.15s",
+                      }}>
+                      <div>
+                        <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", fontWeight: 500 }}>
+                          {i === 0 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥇</span>}
+                          {i === 1 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥈</span>}
+                          {i === 2 && v.avg > 0 && <span style={{ marginRight: 4 }}>🥉</span>}
+                          {v.name}
+                        </div>
+                        <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888", marginTop: 2 }}>
+                          {v.uploader} · {v.uploaded}
+                        </div>
+                      </div>
+                      <div style={{
+                        fontFamily: FONT_MONO, fontSize: 15, fontWeight: 600,
+                        color: v.avg > 0 ? (i === 0 ? "#8a6a3a" : "#3a2a18") : "#c4bfb5",
+                      }}>
+                        {v.avg > 0 ? v.avg.toFixed(1) : "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>}
             </>}
           </div>
 
@@ -363,7 +408,7 @@ export default function WorkBench({ plans, setPlans, role }) {
       {formUI()}
 
       {/* DocReader + ScorePanel */}
-      {docReaderData && <DocReader show={true} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
+      {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
       {showScorePanel && fullWo && <ScorePanel show={true} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
 
       {/* 维度管理 */}
