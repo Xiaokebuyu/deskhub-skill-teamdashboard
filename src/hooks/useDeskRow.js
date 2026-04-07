@@ -56,6 +56,11 @@ export default function useDeskRow(items, getKey) {
     setTimeout(() => { setFocusPhase(null); setFocusIdx(null); setFocusItem(null); }, 750);
   }, []);
 
+  // 静默清理焦点 — 不触发回收动画，用于第二层直接过渡到第三层
+  const clearFocusSilent = useCallback(() => {
+    setFocusPhase(null); setFocusIdx(null); setFocusItem(null);
+  }, []);
+
   const getCenterDelta = (i) => {
     const offset = i - hCenter;
     const yUp = offset * offset * arcK;
@@ -122,7 +127,7 @@ export default function useDeskRow(items, getKey) {
     deskRef, deskW, handOpen, setHandOpen,
     hoverIdx, setHoverIdx,
     focusIdx, focusPhase, focusItem,
-    handleCardFocus, handleDetailClose,
+    handleCardFocus, handleDetailClose, clearFocusSilent,
     handCards, handExtra,
     getCardStyle,
     count: items.length,

@@ -111,20 +111,35 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, onUpd
 
   return (
     <FullPanel show={show} onClose={onClose} originRect={originRect}>
-      {/* Header */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 20, color: "#3a2a18", marginBottom: 8 }}>{wo.name}</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ padding: "3px 8px", background: PRI[wo.priority].bg, borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: PRI[wo.priority].c }}>{PRI[wo.priority].l}</span>
-          {st && <span style={{ padding: "3px 8px", background: st.tagBg + "30", borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: st.c }}>{st.l}</span>}
-          <span style={{ padding: "3px 8px", background: wo.type === "skill" ? "rgba(138,106,58,0.12)" : "rgba(90,122,154,0.12)", borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: wo.type === "skill" ? "#8a6a3a" : "#5a7a9a" }}>{wo.type === "skill" ? "Skill" : "MCP"}</span>
-          <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#a89a78" }}>{wo.created}</span>
-        </div>
-        {wo.desc && (
-          <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#4a4540", lineHeight: 1.6, marginTop: 10 }}>
-            {wo.desc}
+      {/* Header — 标题 + 右上角操作按钮 */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 20, color: "#3a2a18", marginBottom: 8 }}>{wo.name}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ padding: "3px 8px", background: PRI[wo.priority].bg, borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: PRI[wo.priority].c }}>{PRI[wo.priority].l}</span>
+            {st && <span style={{ padding: "3px 8px", background: st.tagBg + "30", borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: st.c }}>{st.l}</span>}
+            <span style={{ padding: "3px 8px", background: wo.type === "skill" ? "rgba(138,106,58,0.12)" : "rgba(90,122,154,0.12)", borderRadius: 6, fontFamily: FONT_SANS, fontSize: 12, color: wo.type === "skill" ? "#8a6a3a" : "#5a7a9a" }}>{wo.type === "skill" ? "Skill" : "MCP"}</span>
+            <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#a89a78" }}>{wo.created}</span>
           </div>
-        )}
+          {wo.desc && (
+            <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#4a4540", lineHeight: 1.6, marginTop: 10 }}>
+              {wo.desc}
+            </div>
+          )}
+        </div>
+        {/* 右上角操作按钮 */}
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 16 }}>
+          {(role === "admin" || role === "member") && wo.status === "active" && (
+            <button onClick={() => onAddVariant && onAddVariant(wo)} style={btnStyle}>
+              <Plus size={13} style={{ marginRight: 4 }} />添加方案
+            </button>
+          )}
+          {role === "admin" && wo.status === "active" && (
+            <button onClick={() => onMarkComplete && onMarkComplete(wo)} style={{ ...btnStyle, background: "rgba(74,138,74,0.1)", color: "#4a8a4a", border: "1px solid rgba(74,138,74,0.2)" }}>
+              标记完成
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 对比表 */}
@@ -149,26 +164,6 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, onUpd
         )}
       </div>
 
-      {/* 底部操作 */}
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        paddingTop: 12, borderTop: "1px solid rgba(0,0,0,0.06)",
-      }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          {(role === "admin" || role === "member") && wo.status === "active" && (
-            <button onClick={() => onAddVariant && onAddVariant(wo)} style={btnStyle}>
-              <Plus size={13} style={{ marginRight: 4 }} />添加方案
-            </button>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {role === "admin" && wo.status === "active" && (
-            <button onClick={() => onMarkComplete && onMarkComplete(wo)} style={{ ...btnStyle, background: "rgba(74,138,74,0.1)", color: "#4a8a4a", border: "1px solid rgba(74,138,74,0.2)" }}>
-              标记完成
-            </button>
-          )}
-        </div>
-      </div>
     </FullPanel>
   );
 }

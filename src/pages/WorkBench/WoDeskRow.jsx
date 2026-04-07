@@ -20,16 +20,13 @@ export default function WoDeskRow({ label, labelColor, icon, wos, dims, onSelect
   const totalVariants = wos.reduce((a, wo) => a + wo.variants.length, 0);
   const highCount = wos.filter(wo => wo.priority === "high").length;
 
-  // 展开详情时捕获弹窗位置作为 originRect
+  // 展开详情时直接过渡 — 从弹窗位置无缝膨胀为第三层，不回收卡片
   const handleExpandFull = (wo) => {
     const rect = detailRef.current?.getBoundingClientRect();
     if (onExpandFull) {
-      // 先关闭第二层
-      dr.handleDetailClose();
-      // 延迟后打开第三层，让关闭动画先跑
-      setTimeout(() => {
-        onExpandFull(wo, rect || null);
-      }, 400);
+      onExpandFull(wo, rect ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height } : null);
+      // 静默清理焦点状态（不触发回收动画）
+      setTimeout(() => dr.clearFocusSilent(), 100);
     }
   };
 
