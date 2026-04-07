@@ -13,6 +13,8 @@ import WoSection from "./WoSection.jsx";
 import WoDeskRow from "./WoDeskRow.jsx";
 import WoBrowse from "./WoBrowse.jsx";
 import WoFullPanel from "./WoFullPanel.jsx";
+import DocReader from "./DocReader.jsx";
+import ScorePanel from "./ScorePanel.jsx";
 import useWorkOrders from "./useWorkOrders.js";
 
 const TYPE_OPTIONS = [
@@ -33,6 +35,10 @@ export default function WorkBench({ plans, setPlans, role }) {
   const [fullWo, setFullWo] = useState(null);
   const [showFull, setShowFull] = useState(false);
   const [fullOriginRect, setFullOriginRect] = useState(null);
+
+  // DocReader + ScorePanel 状态
+  const [docReaderData, setDocReaderData] = useState(null);
+  const [showScorePanel, setShowScorePanel] = useState(false);
 
   const ops = useWorkOrders(plans, setPlans);
   const activeDims = dims.filter(d => d.active);
@@ -94,6 +100,24 @@ export default function WorkBench({ plans, setPlans, role }) {
     }, 450);
   }, []);
 
+  // DocReader
+  const openDocReader = (variant) => {
+    if (variant.content) setDocReaderData({ title: variant.name, content: variant.content });
+  };
+  const closeDocReader = () => setDocReaderData(null);
+
+  // ScorePanel
+  const openScorePanel = () => setShowScorePanel(true);
+  const closeScorePanel = () => setShowScorePanel(false);
+  const handleScoreSubmit = (planId, variantId, scoreEntries) => {
+    ops.submitScores(planId, variantId, scoreEntries);
+    setTimeout(() => {
+      const latest = plans.find(p => p.id === planId);
+      if (latest) setFullWo({ ...latest });
+    }, 50);
+    setShowScorePanel(false);
+  };
+
   // 表单操作
   const openCreate = () => {
     setFMode("create");
@@ -128,7 +152,7 @@ export default function WorkBench({ plans, setPlans, role }) {
   };
 
   // 维度管理
-  const addDim = () => { if (!newDim.trim()) return; setDims(prev => [...prev, { id: nDid(), name: newDim.trim(), max: 5, active: true }]); setNewDim(""); };
+  const addDim = () => { if (!newDim.trim()) return; setDims(prev => [...prev, { id: nDid(), name: newDim.trim(), max: 10, active: true }]); setNewDim(""); };
   const delDim = id => setDims(prev => prev.filter(d => d.id !== id));
   const toggleDim = id => setDims(prev => prev.map(d => d.id === id ? { ...d, active: !d.active } : d));
   const editDim = (id, field, val) => setDims(prev => prev.map(d => d.id === id ? { ...d, [field]: val } : d));
@@ -143,8 +167,11 @@ export default function WorkBench({ plans, setPlans, role }) {
       <>
         <WoBrowse label={browseSection === "active" ? "进行中" : browseSection === "next" ? "下期规划" : "已完成"} wos={bWos} onBack={() => setBrowseSection(null)} onSelect={handleExpandFull} />
         <WoFullPanel wo={fullWo} dims={dims} show={showFull} originRect={fullOriginRect} onClose={handleCloseFull}
-          onUpdate={ops.updatePlan} role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete} />
+          role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
+          onOpenScorePanel={openScorePanel} onOpenDocReader={openDocReader} />
         {formUI()}
+        {docReaderData && <DocReader show={true} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
+        {showScorePanel && fullWo && <ScorePanel show={true} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
       </>
     );
   }
@@ -329,10 +356,15 @@ export default function WorkBench({ plans, setPlans, role }) {
 
       {/* FullPanel 第三层 */}
       <WoFullPanel wo={fullWo} dims={dims} show={showFull} originRect={fullOriginRect} onClose={handleCloseFull}
-        onUpdate={ops.updatePlan} role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete} />
+        role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
+        onOpenScorePanel={openScorePanel} onOpenDocReader={openDocReader} />
 
       {/* 表单 */}
       {formUI()}
+
+      {/* DocReader + ScorePanel */}
+      {docReaderData && <DocReader show={true} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
+      {showScorePanel && fullWo && <ScorePanel show={true} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
 
       {/* 维度管理 */}
       {showDimMgr && (
