@@ -2,8 +2,8 @@ import { useState } from "react";
 import { INIT_PLANS } from "./constants/mock-data.js";
 import Sidebar from "./components/layout/Sidebar.jsx";
 import Dashboard from "./pages/Dashboard/index.jsx";
+import WorkBench from "./pages/WorkBench/index.jsx";
 import SpellBook from "./pages/MCP/index.jsx";
-import Placeholder from "./components/ui/Placeholder.jsx";
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
@@ -24,7 +24,7 @@ export default function App() {
         <div style={{ maxWidth: 920, margin: "0 auto", padding: "0 20px" }}>
           <div style={{ padding: "20px 0 40px" }}>
             {tab === "dashboard" && <Dashboard />}
-            {tab === "workbench" && <Placeholder label="工单管理" />}
+            {tab === "workbench" && <WorkBench plans={plans} setPlans={setPlans} role={role} />}
             {tab === "mcp" && <SpellBook />}
           </div>
         </div>
