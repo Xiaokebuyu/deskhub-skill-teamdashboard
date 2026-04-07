@@ -1,9 +1,21 @@
 import { useState, useCallback } from "react";
 import { SKILLS } from "../../constants/mock-data.js";
 import Stat from "../../components/ui/Stat.jsx";
+import ChartCarousel from "../../components/ui/ChartCarousel.jsx";
 import DeskRow from "./DeskRow.jsx";
 import CardBrowse from "./CardBrowse.jsx";
 import SkillDetail from "./SkillDetail.jsx";
+import TrendChart from "./charts/TrendChart.jsx";
+import DownloadRank from "./charts/DownloadRank.jsx";
+import SceneDistribution from "./charts/SceneDistribution.jsx";
+import HotSearch from "./charts/HotSearch.jsx";
+
+const CHART_TABS = [
+  { id: "trend", label: "迭代趋势", content: <TrendChart /> },
+  { id: "download", label: "下载排行", content: <DownloadRank /> },
+  { id: "scene", label: "分布概况", content: <SceneDistribution /> },
+  { id: "search", label: "热门搜索", content: <HotSearch /> },
+];
 
 export default function Dashboard() {
   const [selSk, setSelSk] = useState(null);
@@ -34,6 +46,7 @@ export default function Dashboard() {
 
   return (
     <>
+      {/* 指标栏 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <Stat label="技能总数" value={SKILLS.length} color="#6a5a42" />
         <Stat label="进行中" value={active.length} color="#b85c1a" />
@@ -45,6 +58,11 @@ export default function Dashboard() {
         <Stat label="PV (本周)" value="12.4k" color="#5a7a5a" />
         <Stat label="UV (本周)" value="3.2k" color="#5a7a5a" />
       </div>
+
+      {/* 数据洞察 — 图表轮播 */}
+      <ChartCarousel tabs={CHART_TABS} height={280} />
+
+      {/* 最近更新 — 卡片行 */}
       {active.length > 0 && (
         <DeskRow label="进行中" labelColor="#b85c1a" skills={active} onSelect={handleSel} onViewAll={() => setBrowseGroup("active")} />
       )}

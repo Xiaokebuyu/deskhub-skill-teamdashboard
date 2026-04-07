@@ -9,9 +9,10 @@
     "deploy": "wrangler pages deploy dist"
   },
   "dependencies": {
+    "lucide-react": "^0.487.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "lucide-react": "^0.487.0"
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.4.1",
