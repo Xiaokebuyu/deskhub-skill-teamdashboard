@@ -59,30 +59,60 @@ function transformSkill(item, versionMap) {
 }
 
 /**
- * 获取技能列表 — 合并列表 + 版本流
+ * 获取技能列表 — 分批串行加载 + 渐进回调
+ * onProgress({ items, total, done }) 每批完成后调用，UI 可实时更新
  */
-export async function getSkills({ pageSize = 100, page = 1, sort = 'newest' } = {}) {
+export async function getSkills({ pageSize = 100, sort = 'newest', onProgress } = {}) {
   if (!USE_API) return SKILLS;
 
-  const [skillsRes, versionsRes] = await Promise.all([
-    get(`/api/proxy/deskhub/skills?pageSize=${pageSize}&page=${page}&sort=${sort}`),
+  const BATCH = 3; // 每批并发数
+
+  // 第一页 + 版本流并发请求
+  const [firstPageRes, versionsRes] = await Promise.all([
+    get(`/api/proxy/deskhub/skills?pageSize=${pageSize}&page=1&sort=${sort}`),
     get('/api/proxy/deskhub/versions?limit=200'),
   ]);
 
   // 构建 slug → 最新版本映射
   const versionMap = {};
   for (const v of versionsRes.data) {
-    if (!versionMap[v.slug]) versionMap[v.slug] = v; // 按 publishedAt 降序，第一条即最新
+    if (!versionMap[v.slug]) versionMap[v.slug] = v;
   }
 
-  const items = skillsRes.data.items.map(item => transformSkill(item, versionMap));
+  const allRaw = [...firstPageRes.data.items];
+  const { total, totalPages } = firstPageRes.data;
+
+  // 推送第一页结果
+  if (onProgress) {
+    onProgress({ items: allRaw.map(i => transformSkill(i, versionMap)), total, done: totalPages <= 1 });
+  }
+
+  // 剩余页分批串行
+  if (totalPages > 1) {
+    const remaining = [];
+    for (let p = 2; p <= totalPages; p++) remaining.push(p);
+
+    for (let i = 0; i < remaining.length; i += BATCH) {
+      const batch = remaining.slice(i, i + BATCH);
+      const results = await Promise.all(
+        batch.map(p => get(`/api/proxy/deskhub/skills?pageSize=${pageSize}&page=${p}&sort=${sort}`))
+      );
+      for (const res of results) {
+        allRaw.push(...res.data.items);
+      }
+      if (onProgress) {
+        const done = i + BATCH >= remaining.length;
+        onProgress({ items: allRaw.map(r => transformSkill(r, versionMap)), total, done });
+      }
+    }
+  }
 
   return {
-    items,
-    total: skillsRes.data.total,
-    page: skillsRes.data.page,
-    totalPages: skillsRes.data.totalPages,
-    meta: skillsRes.meta,
+    items: allRaw.map(item => transformSkill(item, versionMap)),
+    total,
+    page: 1,
+    totalPages,
+    meta: firstPageRes.meta,
   };
 }
 

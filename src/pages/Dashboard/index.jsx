@@ -61,7 +61,10 @@ export default function Dashboard() {
     const since7 = daysAgo(7);
 
     Promise.allSettled([
-      getSkills({ pageSize: 100 }),
+      getSkills({
+        pageSize: 100,
+        onProgress: ({ items }) => { if (!cancelled) setSkills(items); },
+      }),
       getRecentVersions({ since: since14, limit: 200 }),
       getHotEvents(since7),
       getStats(since7),
