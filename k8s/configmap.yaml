@@ -9,6 +9,6 @@ data:
   DESKHUB_BASE: "http://skillshub-server.skillshub.svc:4000"
   UMAMI_BASE: "http://skillshub-umami.skillshub.svc:3000"
   UMAMI_WEBSITE_ID: "149fb71c-b439-4594-88fc-b222b169780e"
-  MCP_ENDPOINT: ""
+  MCP_ENDPOINT: "https://mcp.deskclaw.me/deskclaw/mcp"
   DB_DIR: "/data/db"
   UPLOAD_DIR: "/data/uploads"
