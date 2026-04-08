@@ -1,4 +1,4 @@
-import { MODAL } from "../../constants/theme.js";
+import { MODAL, COLOR } from "../../constants/theme.js";
 
 /**
  * 详情弹窗 — 支持 originRect 实现 Container Transform 效果
@@ -22,7 +22,7 @@ export default function DetailModal({ show, onClose, width, originRect, children
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: w, maxHeight: "80vh",
-        background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+        background: COLOR.gradModal,
         border: "1px solid rgba(0,0,0,0.1)",
         borderRadius: MODAL.radius,
         // 多层 box-shadow 增加深度

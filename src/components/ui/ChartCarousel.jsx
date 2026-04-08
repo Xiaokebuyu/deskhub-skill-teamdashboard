@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { COLOR, GAP, DESK } from "../../constants/theme.js";
 import ToggleSwitch from "./ToggleSwitch.jsx";
 
 /**
@@ -24,15 +25,15 @@ export default function ChartCarousel({ tabs, minHeight = 200 }) {
 
   return (
     <div style={{
-      marginBottom: 16, overflow: "hidden", borderRadius: 14,
-      background: "linear-gradient(180deg, #ede8e0, #e8e2d8)",
-      border: "1px solid rgba(0,0,0,0.05)",
-      boxShadow: "0 1px 4px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.4)",
+      marginBottom: GAP.xl, overflow: "hidden", borderRadius: DESK.radius,
+      background: COLOR.gradDesk,
+      border: DESK.borderClosed,
+      boxShadow: DESK.shadowClosed,
     }}>
       {/* 选择栏 — 内部顶栏 */}
       <div style={{
         display: "flex", justifyContent: "center",
-        padding: "10px 16px 6px",
+        padding: `${GAP.base}px ${GAP.xl}px ${GAP.sm}px`,
       }}>
         <ToggleSwitch
           options={tabs.map(t => ({ id: t.id, label: t.label }))}
@@ -44,7 +45,7 @@ export default function ChartCarousel({ tabs, minHeight = 200 }) {
 
       {/* 内容区 — opacity 过渡，高度自适应 */}
       <div style={{
-        padding: "8px 20px 16px",
+        padding: `${GAP.md}px ${GAP.xxl}px ${GAP.xl}px`,
         minHeight,
         opacity: fading ? 0 : 1,
         transform: fading ? "translateY(8px)" : "translateY(0)",

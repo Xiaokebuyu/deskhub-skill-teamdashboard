@@ -1,5 +1,5 @@
 import { MCP_ST } from "../../constants/status.js";
-import { FONT_MONO, DESK } from "../../constants/theme.js";
+import { FONT_MONO, DESK, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { SIcon } from "../../components/ui/Icons.jsx";
 import useDeskRow from "../../hooks/useDeskRow.js";
 import DeskRowShell from "../../components/cards/DeskRowShell.jsx";
@@ -9,7 +9,7 @@ import McpDetail from "./McpDetail.jsx";
 export default function McpDeskRow({ status, label, labelColor, mcps, onSelect, onViewAll }) {
   const s = status ? MCP_ST[status] : null;
   const displayLabel = label || (s && s.l) || "MCP";
-  const displayColor = labelColor || (s && s.c) || "#4a4540";
+  const displayColor = labelColor || (s && s.c) || COLOR.text2;
 
   const dr = useDeskRow(mcps, m => m.id);
 
@@ -27,20 +27,20 @@ export default function McpDeskRow({ status, label, labelColor, mcps, onSelect, 
           transition: "opacity 0.3s, left 0.4s",
           borderLeft: dr.handOpen ? "none" : DESK.infoLeft,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: GAP.sm, marginBottom: 2 }}>
             {s && <SIcon s={s} size={16} />}
-            <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: displayColor, letterSpacing: 0.3 }}>{displayLabel}</span>
-            <span style={{ fontSize: 13, color: "#a09888", marginLeft: 4 }}>{dr.count} 项</span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: displayColor, letterSpacing: 0.3 }}>{displayLabel}</span>
+            <span style={{ fontSize: FONT_SIZE.base, color: COLOR.sub, marginLeft: GAP.xs }}>{dr.count} 项</span>
           </div>
           {totalCalls > 0 && (
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ background: "rgba(0,0,0,0.04)", borderRadius: 8, padding: "5px 9px" }}>
-                <div style={{ fontSize: 10, color: "#a09888", marginBottom: 2 }}>总调用</div>
-                <div style={{ fontFamily: FONT_MONO, fontSize: 15, color: displayColor }}>{totalCalls.toLocaleString()}</div>
+            <div style={{ display: "flex", gap: GAP.md }}>
+              <div style={{ background: COLOR.borderLt, borderRadius: GAP.md, padding: "5px 9px" }}>
+                <div style={{ fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: 2 }}>总调用</div>
+                <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xl, color: displayColor }}>{totalCalls.toLocaleString()}</div>
               </div>
             </div>
           )}
-          <div style={{ fontSize: 12, color: "#c0b5a5" }}>点击查看全部 ▶</div>
+          <div style={{ fontSize: FONT_SIZE.md, color: "#c0b5a5" }}>点击查看全部 ▶</div>
         </div>
       )}
       renderCards={() => dr.handCards.map((m, i) => (

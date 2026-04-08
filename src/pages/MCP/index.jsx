@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { MCPS } from "../../constants/mock-data.js";
+import { COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { getMCPData } from "../../services/mcpService.js";
 import { McpSkeleton, ErrorRetry } from "../../components/ui/Skeleton.jsx";
 
@@ -79,7 +80,7 @@ export default function SpellBook() {
   }
 
   return (
-    <div style={{ padding: "0 0 40px" }}>
+    <div style={{ padding: `0 0 ${GAP.page}px` }}>
       {loading && <McpSkeleton />}
       {!loading && error && mcps.length === 0 && (
         <ErrorRetry message={`MCP 数据加载失败: ${error}`} onRetry={() => setRetryKey(k => k + 1)} />
@@ -88,21 +89,21 @@ export default function SpellBook() {
 
       {/* 服务器信息（真实数据时显示）*/}
       {isReal && mcpInfo && (
-        <div style={{ fontSize: 12, color: '#7a6a55', marginBottom: 10 }}>
+        <div style={{ fontSize: FONT_SIZE.md, color: COLOR.text4, marginBottom: GAP.base }}>
           DeskClaw <span style={{ fontWeight: 600 }}>v{mcpInfo.version}</span>
-          {mcpHealth && <span style={{ marginLeft: 8, color: mcpHealth.status === 'ok' ? '#4a8a4a' : '#b83a2a' }}>
+          {mcpHealth && <span style={{ marginLeft: GAP.md, color: mcpHealth.status === 'ok' ? COLOR.success : COLOR.error }}>
             {mcpHealth.status === 'ok' ? '● 运行中' : '● 异常'}
           </span>}
-          <span style={{ marginLeft: 8, color: '#aaa' }}>{mcps.length} 个工具</span>
+          <span style={{ marginLeft: GAP.md, color: '#aaa' }}>{mcps.length} 个工具</span>
         </div>
       )}
 
       {/* 指标栏 */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: GAP.md, marginBottom: GAP.lg, flexWrap: "wrap" }}>
         <Stat label="MCP 工具" value={mcps.length} color="#6a8aaa" />
         <Stat label="已上线" value={activeCount} color="#5a4a30" />
-        <Stat label="总调用" value={totalCalls != null ? totalCalls.toLocaleString() : "暂无数据"} color={totalCalls != null ? "#b85c1a" : "#aaa"} />
-        <Stat label="平均成功率" value={avgSuccess != null ? avgSuccess.toFixed(1) + "%" : "暂无数据"} color={avgSuccess != null ? (avgSuccess >= 95 ? "#4a8a4a" : "#b8861a") : "#aaa"} />
+        <Stat label="总调用" value={totalCalls != null ? totalCalls.toLocaleString() : "暂无数据"} color={totalCalls != null ? COLOR.warn : "#aaa"} />
+        <Stat label="平均成功率" value={avgSuccess != null ? avgSuccess.toFixed(1) + "%" : "暂无数据"} color={avgSuccess != null ? (avgSuccess >= 95 ? COLOR.success : "#b8861a") : "#aaa"} />
       </div>
 
       {/* 图表轮播 */}
@@ -121,7 +122,7 @@ export default function SpellBook() {
       {/* Mock 数据：高频调用 */}
       {!isReal && ranked.length > 0 && (
         <McpDeskRow
-          label="高频调用" labelColor="#b85c1a"
+          label="高频调用" labelColor={COLOR.warn}
           mcps={ranked}
           onSelect={openDet}
           onViewAll={() => setBrowseS("ranked")}
@@ -131,7 +132,7 @@ export default function SpellBook() {
       {/* 规划中 */}
       {planned.length > 0 && (
         <McpDeskRow
-          label="规划中" labelColor="#3a6a3a"
+          label="规划中" labelColor={COLOR.plan}
           mcps={planned}
           onSelect={openDet}
           onViewAll={() => setBrowseS("planned")}

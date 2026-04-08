@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { X } from "lucide-react";
-import { PANEL } from "../../constants/theme.js";
+import { PANEL, COLOR, GAP } from "../../constants/theme.js";
 
 /**
  * Container Transform 动画壳 — 从 originRect 展开到近全屏
@@ -60,7 +60,7 @@ export default function FullPanel({ show, onClose, originRect, actions, children
         top: rect.top, left: rect.left,
         width: rect.width, height: rect.height,
         zIndex: PANEL.zIndex,
-        background: "linear-gradient(180deg, #fdfcfa 0%, #fff 20%)",
+        background: COLOR.gradModal,
         borderRadius: isExpanded ? 16 : PANEL.radius,
         boxShadow: isExpanded
           ? "0 4px 8px rgba(0,0,0,0.04), 0 16px 32px rgba(0,0,0,0.1), 0 32px 64px rgba(0,0,0,0.14), inset 0 1px 0 rgba(255,255,255,0.8)"
@@ -79,13 +79,13 @@ export default function FullPanel({ show, onClose, originRect, actions, children
           {/* 顶栏：操作按钮 + 关闭 */}
           <div style={{
             position: "sticky", top: 0, zIndex: 10,
-            display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8,
-            padding: "12px 16px 0",
+            display: "flex", alignItems: "center", justifyContent: "flex-end", gap: GAP.md,
+            padding: `${GAP.lg}px ${GAP.xl}px 0`,
             background: "linear-gradient(180deg, rgba(253,252,250,0.95) 0%, rgba(253,252,250,0) 100%)",
           }}>
             {actions}
             <div onClick={handleClose} style={{
-              width: 32, height: 32, borderRadius: 8,
+              width: 32, height: 32, borderRadius: GAP.md,
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer",
               background: "rgba(0,0,0,0.04)",
@@ -95,7 +95,7 @@ export default function FullPanel({ show, onClose, originRect, actions, children
               onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.08)"}
               onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
             >
-              <X size={16} color="#8a7a62" strokeWidth={1.5} />
+              <X size={16} color={COLOR.text5} strokeWidth={1.5} />
             </div>
           </div>
 

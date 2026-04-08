@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { X } from "lucide-react";
+import { COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 
 export default function HandOverlay({ items, renderCard, onSelect, onClose }) {
   const [phase, setPhase] = useState("stack");
@@ -80,16 +81,16 @@ export default function HandOverlay({ items, renderCard, onSelect, onClose }) {
         </div>
       </div>
       {phase === "arc" && (
-        <div style={{ position: "absolute", top: 20, right: 20, zIndex: 1000 }}>
+        <div style={{ position: "absolute", top: GAP.xxl, right: GAP.xxl, zIndex: 1000 }}>
           <button onClick={handleClose} style={{
             background: "rgba(246,241,234,0.1)", border: "1px solid rgba(220,210,195,0.15)",
-            borderRadius: 10, padding: "8px 14px", cursor: "pointer",
-            fontSize: 13, color: "rgba(220,210,195,0.6)", display: "flex", alignItems: "center", gap: 4,
+            borderRadius: GAP.base, padding: `${GAP.md}px 14px`, cursor: "pointer",
+            fontSize: FONT_SIZE.base, color: "rgba(220,210,195,0.6)", display: "flex", alignItems: "center", gap: GAP.xs,
             transition: "all 0.2s",
           }}
           onMouseEnter={e => e.currentTarget.style.background = "rgba(246,241,234,0.2)"}
           onMouseLeave={e => e.currentTarget.style.background = "rgba(246,241,234,0.1)"}
-          ><X size={14} />收起</button>
+          ><X size={FONT_SIZE.lg} />收起</button>
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { ST } from "../../constants/status.js";
-import { FONT_MONO, DESK } from "../../constants/theme.js";
+import { FONT_MONO, DESK, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { SIcon } from "../../components/ui/Icons.jsx";
 import useDeskRow from "../../hooks/useDeskRow.js";
 import DeskRowShell from "../../components/cards/DeskRowShell.jsx";
@@ -10,7 +10,7 @@ export default function DeskRow({ status, label, labelColor, skills, onSelect, o
   // 支持新的 label/labelColor 直传，向后兼容 status 查找
   const s = status ? ST[status] : null;
   const displayLabel = label || (s && s.l) || "未知";
-  const displayColor = labelColor || (s && s.c) || "#4a4540";
+  const displayColor = labelColor || (s && s.c) || COLOR.text2;
 
   const sorted = [...skills].sort((a, b) => b.updated.localeCompare(a.updated));
   const dr = useDeskRow(sorted, sk => sk.slug);
@@ -26,27 +26,27 @@ export default function DeskRow({ status, label, labelColor, skills, onSelect, o
         <div onClick={() => dr.handOpen ? (dr.focusPhase ? null : dr.setHandOpen(false)) : onViewAll()} style={{
           position: "absolute", right: 0, top: 0, bottom: 0,
           left: dr.handOpen ? "100%" : (20 + (Math.min(dr.count, 5) - 1) * 38 + DESK.cardW + 20),
-          padding: dr.handOpen ? 0 : "14px 16px", display: "flex", flexDirection: "column",
-          justifyContent: "center", gap: 6, cursor: "pointer",
+          padding: dr.handOpen ? 0 : `${FONT_SIZE.lg}px ${FONT_SIZE.xxl}px`, display: "flex", flexDirection: "column",
+          justifyContent: "center", gap: GAP.sm, cursor: "pointer",
           opacity: dr.handOpen ? 0 : 1, overflow: "hidden",
           transition: "opacity 0.3s, left 0.4s",
           borderLeft: dr.handOpen ? "none" : DESK.infoLeft,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, whiteSpace: "nowrap" }}>
-            {s && <SIcon s={s} size={16} />}
-            <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: displayColor, letterSpacing: 0.3 }}>{displayLabel}</span>
-            <span style={{ fontSize: 13, color: "#a09888", marginLeft: 4 }}>{dr.count} 件技能</span>
+          <div style={{ display: "flex", alignItems: "center", gap: GAP.sm, marginBottom: GAP.xs, whiteSpace: "nowrap" }}>
+            {s && <SIcon s={s} size={FONT_SIZE.xxl} />}
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: displayColor, letterSpacing: 0.3 }}>{displayLabel}</span>
+            <span style={{ fontSize: FONT_SIZE.base, color: COLOR.sub, marginLeft: GAP.xs }}>{dr.count} 件技能</span>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[{ label: "总迭代", val: totalIters, c: displayColor }, { label: "下载量", val: totalDl, c: "#7a6a55" }, { label: "查看数", val: totalViews, c: "#7a6a55" }].map(it => (
-              <div key={it.label} style={{ background: "rgba(0,0,0,0.04)", borderRadius: 8, padding: "5px 9px" }}>
-                <div style={{ fontSize: 10, color: "#a09888", letterSpacing: 0.3, marginBottom: 2 }}>{it.label}</div>
-                <div style={{ fontFamily: FONT_MONO, fontSize: 15, color: it.c }}>{it.val}</div>
+          <div style={{ display: "flex", gap: GAP.md, flexWrap: "wrap" }}>
+            {[{ label: "总迭代", val: totalIters, c: displayColor }, { label: "下载量", val: totalDl, c: COLOR.text4 }, { label: "查看数", val: totalViews, c: COLOR.text4 }].map(it => (
+              <div key={it.label} style={{ background: COLOR.borderLt, borderRadius: GAP.md, padding: "5px 9px" }}>
+                <div style={{ fontSize: FONT_SIZE.xs, color: COLOR.sub, letterSpacing: 0.3, marginBottom: 2 }}>{it.label}</div>
+                <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xl, color: it.c }}>{it.val}</div>
               </div>
             ))}
           </div>
-          {latest && <div style={{ fontSize: 13, color: "#b5a898", marginTop: 2, whiteSpace: "nowrap" }}>最近: {latest.name} ({latest.updated})</div>}
-          <div style={{ fontSize: 12, color: "#c0b5a5" }}>点击查看全部 ▶</div>
+          {latest && <div style={{ fontSize: FONT_SIZE.base, color: "#b5a898", marginTop: 2, whiteSpace: "nowrap" }}>最近: {latest.name} ({latest.updated})</div>}
+          <div style={{ fontSize: FONT_SIZE.md, color: "#c0b5a5" }}>点击查看全部 ▶</div>
         </div>
       )}
       renderCards={() => dr.handCards.map((sk, i) => (

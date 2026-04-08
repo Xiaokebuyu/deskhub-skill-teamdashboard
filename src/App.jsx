@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { INIT_PLANS, INIT_DIMS } from "./constants/mock-data.js";
 import { fetchPlans, fetchDimensions } from "./services/workService.js";
+import { COLOR, GAP } from "./constants/theme.js";
 import Sidebar from "./components/layout/Sidebar.jsx";
 import Dashboard from "./pages/Dashboard/index.jsx";
 import WorkBench from "./pages/WorkBench/index.jsx";
@@ -38,7 +39,7 @@ export default function App() {
   }, []);
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#F9F8F6", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100vh", background: COLOR.bg, overflow: "hidden" }}>
       <Sidebar
         tab={tab} setTab={setTab}
         role={role} setRole={setRole}
@@ -51,8 +52,8 @@ export default function App() {
       />
 
       <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
-        <div style={{ maxWidth: 920, margin: "0 auto", padding: "0 20px" }}>
-          <div style={{ padding: "20px 0 40px" }}>
+        <div style={{ maxWidth: 920, margin: "0 auto", padding: `0 ${GAP.xxl}px` }}>
+          <div style={{ padding: `${GAP.xxl}px 0 ${GAP.page}px` }}>
             {tab === "dashboard" && <Dashboard />}
             {tab === "workbench" && <WorkBench plans={plans} setPlans={setPlans} role={role} dims={dims} setDims={setDims} showDimMgr={showDimMgr} setShowDimMgr={setShowDimMgr} />}
             {tab === "mcp" && <SpellBook />}

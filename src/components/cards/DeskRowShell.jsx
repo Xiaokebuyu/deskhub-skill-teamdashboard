@@ -1,10 +1,10 @@
 import { X } from "lucide-react";
-import { DESK } from "../../constants/theme.js";
+import { DESK, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 
 export default function DeskRowShell({ deskRef, handOpen, setHandOpen, focusPhase, handExtra, onViewAll, renderInfo, renderCards, renderDetail }) {
   return (
-    <div style={{ marginBottom: 12, position: "relative", zIndex: handOpen ? 50 : 1 }}>
-      {handOpen && <div onClick={() => { if (!focusPhase) setHandOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.04)", zIndex: 40 }} />}
+    <div style={{ marginBottom: GAP.lg, position: "relative", zIndex: handOpen ? 50 : 1 }}>
+      {handOpen && <div onClick={() => { if (!focusPhase) setHandOpen(false); }} style={{ position: "fixed", inset: 0, background: COLOR.borderLt, zIndex: 40 }} />}
 
       <div ref={deskRef} style={{
         position: "relative", height: DESK.height, zIndex: handOpen ? 45 : 1,
@@ -25,17 +25,17 @@ export default function DeskRowShell({ deskRef, handOpen, setHandOpen, focusPhas
 
         {/* 底部按钮 */}
         {handOpen && !focusPhase && (
-          <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 8, zIndex: 210 }}>
+          <div style={{ position: "absolute", bottom: GAP.md, right: GAP.lg, display: "flex", gap: GAP.md, zIndex: 210 }}>
             {handExtra > 0 && (
               <button onClick={e => { e.stopPropagation(); setHandOpen(false); onViewAll(); }} style={{
-                background: "rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 8,
-                padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "#6a5a45",
+                background: COLOR.border, border: `1px solid ${COLOR.border}`, borderRadius: GAP.md,
+                padding: `${GAP.xs}px ${GAP.base}px`, cursor: "pointer", fontSize: FONT_SIZE.md, color: "#6a5a45",
               }}>还有 {handExtra} 张 →</button>
             )}
             <button onClick={e => { e.stopPropagation(); setHandOpen(false); }} style={{
-              background: "rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 8,
-              padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "#8a7a65",
-            }}><X size={12} style={{ verticalAlign: "middle" }} /> 收起</button>
+              background: COLOR.border, border: `1px solid ${COLOR.border}`, borderRadius: GAP.md,
+              padding: `${GAP.xs}px ${GAP.base}px`, cursor: "pointer", fontSize: FONT_SIZE.md, color: "#8a7a65",
+            }}><X size={FONT_SIZE.md} style={{ verticalAlign: "middle" }} /> 收起</button>
           </div>
         )}
       </div>

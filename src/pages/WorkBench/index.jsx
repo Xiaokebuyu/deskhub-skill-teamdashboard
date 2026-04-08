@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Flame, ScrollText, BadgeCheck } from "lucide-react";
 import { PLAN_PHASE, PLAN_RESULT } from "../../constants/status.js";
 import { PRI } from "../../constants/priority.js";
-import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
+import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { getPhase, avgScore } from "../../utils/helpers.js";
 import { nDid } from "../../utils/helpers.js";
 import Stat from "../../components/ui/Stat.jsx";
@@ -250,7 +250,7 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
         <div onClick={e => e.stopPropagation()} style={{
           width: fMode === "create" ? 440 : fMode === "complete" ? 400 : 460,
           maxHeight: "85vh", display: "flex", flexDirection: "column",
-          background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+          background: COLOR.gradModal,
           border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
           boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
           overflow: "hidden",
@@ -258,29 +258,29 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
           transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
         }}>
           {/* 标题栏 */}
-          <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-            <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 600, color: "#3a2a18" }}>
+          <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}` }}>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
               {titles[fMode]}
             </div>
           </div>
 
           {/* 表单内容 */}
-          <div style={{ padding: "16px 20px", flex: 1, overflowY: "auto" }}>
+          <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px`, flex: 1, overflowY: "auto" }}>
             {fMode === "create" && <>
               <FInput label="工单名称" value={fData.name} onChange={e => setFData(p => ({ ...p, name: e.target.value }))} placeholder="如 PPT生成优化" />
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", gap: GAP.base }}>
                 <div style={{ flex: 1 }}><FSelect label="类型" value={fData.type} onChange={v => setFData(p => ({ ...p, type: v }))} options={[{ v: "skill", l: "Skill" }, { v: "mcp", l: "MCP" }]} /></div>
                 <div style={{ flex: 1 }}><FSelect label="优先级" value={fData.priority} onChange={v => setFData(p => ({ ...p, priority: v }))} options={[{ v: "high", l: "高", c: "#b83a2a" }, { v: "medium", l: "中", c: "#b8861a" }, { v: "low", l: "低", c: "#5a8a5a" }]} /></div>
               </div>
               <FSelect label="状态" value={fData.status} onChange={v => setFData(p => ({ ...p, status: v }))} options={[{ v: "next", l: "规划中", c: "#3a6a3a" }, { v: "active", l: "立即开始", c: "#b85c1a" }]} />
               <FInput label="描述" value={fData.desc} onChange={e => setFData(p => ({ ...p, desc: e.target.value }))} placeholder="目标和要求说明" multiline />
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", gap: GAP.base }}>
                 <div style={{ flex: 1 }}><FInput label="负责人" value={fData.owner} onChange={e => setFData(p => ({ ...p, owner: e.target.value }))} placeholder="发起人姓名" /></div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: 15, color: "#5a5550", marginBottom: 4 }}>截止日期</div>
+                  <div style={{ marginBottom: GAP.lg }}>
+                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>截止日期</div>
                     <input type="date" value={fData.deadline} onChange={e => setFData(p => ({ ...p, deadline: e.target.value }))}
-                      style={{ width: "100%", padding: "8px 10px", background: "rgba(255,255,255,0.4)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 8, fontFamily: FONT_SANS, fontSize: 17, color: "#3a2a18", outline: "none", boxSizing: "border-box" }} />
+                      style={{ width: "100%", padding: `${GAP.md}px ${GAP.base}px`, background: "rgba(255,255,255,0.4)", border: `1px solid ${COLOR.border}`, borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.h2, color: COLOR.text, outline: "none", boxSizing: "border-box" }} />
                   </div>
                 </div>
               </div>
@@ -291,17 +291,17 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
               <FInput label="方案说明" value={fData.desc} onChange={e => setFData(p => ({ ...p, desc: e.target.value }))} placeholder="简述技术路线、优缺点等" multiline />
               <FInput label="外部链接" value={fData.link} onChange={e => setFData(p => ({ ...p, link: e.target.value }))} placeholder="参考文档 URL（选填）" />
               {/* 方案文档 — Markdown 内容编辑 */}
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: GAP.lg }}>
                 <div
                   onClick={() => setFData(p => ({ ...p, showDocEditor: !p.showDocEditor }))}
                   style={{
-                    fontFamily: FONT_SANS, fontSize: 13, color: "#5a7a9a", cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: 4, marginBottom: fData.showDocEditor ? 6 : 0,
+                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.blue, cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: GAP.xs, marginBottom: fData.showDocEditor ? GAP.sm : 0,
                     userSelect: "none",
                   }}>
-                  <span style={{ fontSize: 10, transform: fData.showDocEditor ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+                  <span style={{ fontSize: FONT_SIZE.xs, transform: fData.showDocEditor ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
                   方案文档（Markdown）
-                  {fData.content && <span style={{ fontSize: 11, color: "#4a8a4a", marginLeft: 4 }}>已填写</span>}
+                  {fData.content && <span style={{ fontSize: FONT_SIZE.sm, color: COLOR.success, marginLeft: GAP.xs }}>已填写</span>}
                 </div>
                 {fData.showDocEditor && (
                   <MarkdownInput
@@ -315,21 +315,21 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
             </>}
             {fMode === "complete" && <>
               {/* 结论选择 */}
-              <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>定稿结论</div>
-              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.md }}>定稿结论</div>
+              <div style={{ display: "flex", gap: GAP.base, marginBottom: GAP.xl }}>
                 {[
                   { v: "adopted", l: "采纳方案", desc: "选定方案，内置上线" },
                   { v: "shelved", l: "搁置", desc: "暂不推进，保留记录" },
                 ].map(o => (
                   <div key={o.v} onClick={() => setFData(p => ({ ...p, result: o.v }))}
                     style={{
-                      flex: 1, padding: "12px", borderRadius: 10, cursor: "pointer",
-                      border: fData.result === o.v ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.08)",
+                      flex: 1, padding: `${GAP.lg}px`, borderRadius: GAP.base, cursor: "pointer",
+                      border: fData.result === o.v ? `2px solid ${COLOR.text}` : `1px solid ${COLOR.borderMd}`,
                       background: fData.result === o.v ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.02)",
                       transition: "all 0.15s",
                     }}>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: 14, fontWeight: 600, color: "#3a2a18", marginBottom: 4 }}>{o.l}</div>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#8a7a62" }}>{o.desc}</div>
+                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text, marginBottom: GAP.xs }}>{o.l}</div>
+                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text5 }}>{o.desc}</div>
                   </div>
                 ))}
               </div>
@@ -337,31 +337,31 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
               {/* 采纳时：方案排名 + 选择 */}
               {fData.result === "adopted" && Array.isArray(fData.variants) && fData.variants.length > 0 && (
                 <div>
-                  <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>选定采纳方案</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.md }}>选定采纳方案</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: GAP.sm, marginBottom: GAP.md }}>
                     {fData.variants.map((v, i) => (
                       <div key={v.id || i} onClick={() => setFData(p => ({ ...p, selectedVariantId: v.id }))}
                         style={{
                           display: "flex", justifyContent: "space-between", alignItems: "center",
-                          padding: "10px 12px", borderRadius: 8, cursor: "pointer",
-                          border: fData.selectedVariantId === v.id ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.06)",
+                          padding: `${GAP.base}px ${GAP.lg}px`, borderRadius: GAP.md, cursor: "pointer",
+                          border: fData.selectedVariantId === v.id ? `2px solid ${COLOR.text}` : `1px solid ${COLOR.border}`,
                           background: fData.selectedVariantId === v.id ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.01)",
                           transition: "all 0.15s",
                         }}>
                         <div>
-                          <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", fontWeight: 500 }}>
+                          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, fontWeight: 500 }}>
                             {i === 0 && v.avg > 0 && "🥇 "}
                             {i === 1 && v.avg > 0 && "🥈 "}
                             {i === 2 && v.avg > 0 && "🥉 "}
                             {v.name || "未命名"}
                           </div>
-                          <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888", marginTop: 2 }}>
+                          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginTop: 2 }}>
                             {v.uploader || ""} {v.uploaded ? `· ${v.uploaded}` : ""}
                           </div>
                         </div>
                         <div style={{
-                          fontFamily: FONT_MONO, fontSize: 15, fontWeight: 600,
-                          color: v.avg > 0 ? (i === 0 ? "#8a6a3a" : "#3a2a18") : "#c4bfb5",
+                          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xl, fontWeight: 600,
+                          color: v.avg > 0 ? (i === 0 ? COLOR.brown : COLOR.text) : COLOR.dim,
                         }}>
                           {typeof v.avg === "number" && v.avg > 0 ? v.avg.toFixed(1) : "—"}
                         </div>
@@ -374,18 +374,18 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
           </div>
 
           {/* 底部按钮 */}
-          <div style={{ padding: "0 20px 16px", display: "flex", gap: 10 }}>
+          <div style={{ padding: `0 ${GAP.xxl}px ${GAP.xl}px`, display: "flex", gap: GAP.base }}>
             <button onClick={closeForm} style={{
-              flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer",
-              fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500,
-              background: "rgba(0,0,0,0.04)", color: "#5a5550",
-              border: "1px solid rgba(0,0,0,0.08)", transition: "all 0.15s",
+              flex: 1, padding: `${GAP.base}px`, borderRadius: GAP.md, cursor: "pointer",
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 500,
+              background: COLOR.borderLt, color: COLOR.text3,
+              border: `1px solid ${COLOR.borderMd}`, transition: "all 0.15s",
             }}>取消</button>
             <button onClick={save} style={{
-              flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer",
-              fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500,
-              background: "#2d2418", color: "#f5f0e8",
-              border: "1px solid #2d2418", transition: "all 0.15s",
+              flex: 1, padding: `${GAP.base}px`, borderRadius: GAP.md, cursor: "pointer",
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 500,
+              background: COLOR.btn, color: COLOR.btnText,
+              border: `1px solid ${COLOR.btn}`, transition: "all 0.15s",
             }}>{fMode === "create" ? "创建" : fMode === "addVar" ? "添加" : "确认定稿"}</button>
           </div>
         </div>
@@ -396,28 +396,28 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
   return (
     <div style={{ padding: "0 0 40px" }}>
       {/* 顶部栏 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: GAP.lg, marginBottom: 14, flexWrap: "wrap" }}>
         <ToggleSwitch options={TYPE_OPTIONS} value={typeFilter} onChange={setTypeFilter} />
         <div style={{ flex: 1 }} />
         {role === "admin" && (
           <div onClick={openCreate} style={{
-            padding: "7px 16px", borderRadius: 8, cursor: "pointer",
-            fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500,
-            background: "#2d2418", color: "#f5f0e8",
-            border: "1px solid #2d2418",
-            display: "flex", alignItems: "center", gap: 4,
+            padding: `7px ${GAP.xl}px`, borderRadius: GAP.md, cursor: "pointer",
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
+            background: COLOR.btn, color: COLOR.btnText,
+            border: `1px solid ${COLOR.btn}`,
+            display: "flex", alignItems: "center", gap: GAP.xs,
             transition: "all 0.15s",
           }}
-            onMouseEnter={e => e.currentTarget.style.background = "#3d3428"}
-            onMouseLeave={e => e.currentTarget.style.background = "#2d2418"}
+            onMouseEnter={e => e.currentTarget.style.background = COLOR.btnHover}
+            onMouseLeave={e => e.currentTarget.style.background = COLOR.btn}
           >
-            <span style={{ fontSize: 14 }}>+</span>新建工单
+            <span style={{ fontSize: FONT_SIZE.lg }}>+</span>新建工单
           </div>
         )}
       </div>
 
       {/* 指标栏 */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "stretch" }}>
+      <div style={{ display: "flex", gap: GAP.md, marginBottom: GAP.xl, flexWrap: "wrap", alignItems: "stretch" }}>
         <Stat label="工单总数" value={filtered.length} color="#6a5a42" />
         <Stat label="进行中" value={active.length} color="#b85c1a" />
         <Stat label="下期规划" value={next.length} color="#3a6a3a" />
@@ -483,7 +483,7 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
 
       {/* 空状态 */}
       {filtered.length === 0 && (
-        <div style={{ textAlign: "center", padding: "40px 20px", fontFamily: FONT_SANS, fontSize: 16, color: "#a09888" }}>
+        <div style={{ textAlign: "center", padding: `${GAP.page}px ${GAP.xxl}px`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, color: COLOR.sub }}>
           暂无 {typeFilter === "skill" ? "Skill" : "MCP"} 工单
         </div>
       )}
@@ -512,37 +512,37 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             width: 360,
-            background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+            background: COLOR.gradModal,
             border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
             boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
             overflow: "hidden",
             transform: "scale(1) translateY(0)",
             transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
           }}>
-            <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-              <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 600, color: "#3a2a18" }}>评分维度设置</div>
+            <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}` }}>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>评分维度设置</div>
             </div>
-            <div style={{ padding: "12px 20px", maxHeight: "60vh", overflow: "auto" }}>
+            <div style={{ padding: `${GAP.lg}px ${GAP.xxl}px`, maxHeight: "60vh", overflow: "auto" }}>
               {dims.map(d => (
-                <div key={d.id} style={{ padding: "10px 0", borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45, transition: "opacity 0.15s" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#3a2a18", background: "transparent", border: "none", borderBottom: "1px dashed rgba(0,0,0,0.08)", outline: "none", padding: "0 0 2px", width: 100 }} />
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <button onClick={() => toggleDim(d.id)} style={{ padding: "3px 10px", borderRadius: 6, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, border: d.active ? "1px solid rgba(74,138,74,0.3)" : "1px solid rgba(0,0,0,0.06)", background: d.active ? "rgba(74,138,74,0.1)" : "rgba(0,0,0,0.04)", color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用" : "禁用"}</button>
-                      <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: 12, color: "#b83a2a" }}>删除</button>
+                <div key={d.id} style={{ padding: `${GAP.base}px 0`, borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45, transition: "opacity 0.15s" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.sm }}>
+                    <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text, background: "transparent", border: "none", borderBottom: `1px dashed ${COLOR.borderMd}`, outline: "none", padding: "0 0 2px", width: 100 }} />
+                    <div style={{ display: "flex", gap: GAP.sm, alignItems: "center" }}>
+                      <button onClick={() => toggleDim(d.id)} style={{ padding: `3px ${GAP.base}px`, borderRadius: 6, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, border: d.active ? "1px solid rgba(74,138,74,0.3)" : `1px solid ${COLOR.border}`, background: d.active ? "rgba(74,138,74,0.1)" : COLOR.borderLt, color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用" : "禁用"}</button>
+                      <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.error }}>删除</button>
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#9a8a68" }}>满分</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: GAP.sm }}>
+                    <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: "#9a8a68" }}>满分</span>
                     {[3, 5, 10].map(n => (
-                      <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: "2px 8px", borderRadius: 5, cursor: "pointer", fontFamily: FONT_MONO, fontSize: 12, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : "1px solid rgba(0,0,0,0.06)", background: d.max === n ? "rgba(0,0,0,0.08)" : "transparent", color: "#4a4540", transition: "all 0.15s" }}>{n}</button>
+                      <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: `2px ${GAP.md}px`, borderRadius: 5, cursor: "pointer", fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : `1px solid ${COLOR.border}`, background: d.max === n ? COLOR.borderMd : "transparent", color: COLOR.text2, transition: "all 0.15s" }}>{n}</button>
                     ))}
                   </div>
                 </div>
               ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: "8px 12px", background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 8, fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", outline: "none" }} />
-                <button onClick={addDim} style={{ padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500, background: "#2d2418", color: "#f5f0e8", border: "1px solid #2d2418", transition: "all 0.15s" }}>添加</button>
+              <div style={{ display: "flex", gap: GAP.md, marginTop: 14 }}>
+                <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: `${GAP.md}px ${GAP.lg}px`, background: "rgba(0,0,0,0.02)", border: `1px solid ${COLOR.border}`, borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, outline: "none" }} />
+                <button onClick={addDim} style={{ padding: `${GAP.md}px ${GAP.xl}px`, borderRadius: GAP.md, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500, background: COLOR.btn, color: COLOR.btnText, border: `1px solid ${COLOR.btn}`, transition: "all 0.15s" }}>添加</button>
               </div>
             </div>
           </div>

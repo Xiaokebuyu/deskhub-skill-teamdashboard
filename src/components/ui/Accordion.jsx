@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
+import { COLOR, GAP } from "../../constants/theme.js";
 
 /**
  * 手风琴组件 — 同一时间只展开一个 item
@@ -36,8 +37,8 @@ function AccordionItem({ item, expanded, onToggle }) {
       <div
         onClick={onToggle}
         style={{
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "10px 12px", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: GAP.sm,
+          padding: `${GAP.base}px ${GAP.lg}px`, cursor: "pointer",
           transition: "background 0.15s",
         }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"}
@@ -46,7 +47,7 @@ function AccordionItem({ item, expanded, onToggle }) {
         <ChevronRight
           size={14}
           style={{
-            color: "#a09888", flexShrink: 0,
+            color: COLOR.sub, flexShrink: 0,
             transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
             transition: "transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)",
           }}
@@ -61,7 +62,7 @@ function AccordionItem({ item, expanded, onToggle }) {
         overflow: "hidden",
         transition: "max-height 0.35s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.25s ease",
       }}>
-        <div ref={contentRef} style={{ padding: "0 12px 12px 32px" }}>
+        <div ref={contentRef} style={{ padding: `0 ${GAP.lg}px ${GAP.lg}px 32px` }}>
           {item.content}
         </div>
       </div>

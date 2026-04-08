@@ -1,8 +1,8 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { FONT_SANS } from "../../../constants/theme.js";
+import { FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../../constants/theme.js";
 
-const CAT_COLORS = ["#b85c1a", "#5a7a9a"];
-const SRC_COLORS = ["#8a6a3a", "#5a8a5a", "#7a6a9a", "#9a6a6a", "#6a8a9a"];
+const CAT_COLORS = [COLOR.warn, COLOR.blue];
+const SRC_COLORS = [COLOR.brown, "#5a8a5a", "#7a6a9a", "#9a6a6a", "#6a8a9a"];
 
 /**
  * @param {{ skills?: Array<{ cat: string, source: string }> }} props
@@ -10,7 +10,7 @@ const SRC_COLORS = ["#8a6a3a", "#5a8a5a", "#7a6a9a", "#9a6a6a", "#6a8a9a"];
  */
 export default function SceneDistribution({ skills = [] }) {
   if (skills.length === 0) {
-    return <div style={{ color: '#aaa', fontSize: 13, textAlign: 'center', padding: 40 }}>暂无数据</div>;
+    return <div style={{ color: '#aaa', fontSize: FONT_SIZE.base, textAlign: 'center', padding: GAP.page }}>暂无数据</div>;
   }
 
   // 按 cat 分布
@@ -24,28 +24,28 @@ export default function SceneDistribution({ skills = [] }) {
   const srcData = Object.entries(srcCount).map(([k, v]) => ({ name: k, value: v }));
 
   return (
-    <div style={{ width: "100%", height: 220, display: "flex", gap: 20 }}>
+    <div style={{ width: "100%", height: 220, display: "flex", gap: GAP.xxl }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 4, textAlign: "center" }}>类型分布</div>
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text4, marginBottom: GAP.xs, textAlign: "center" }}>类型分布</div>
         <ResponsiveContainer width="100%" height="90%">
           <PieChart>
             <Pie data={catData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} dataKey="value" paddingAngle={3} strokeWidth={0}>
               {catData.map((_, i) => <Cell key={i} fill={CAT_COLORS[i % CAT_COLORS.length]} />)}
             </Pie>
-            <Tooltip contentStyle={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 8, fontSize: 12, fontFamily: FONT_SANS }} />
-            <Legend wrapperStyle={{ fontSize: 11, fontFamily: FONT_SANS }} />
+            <Tooltip contentStyle={{ background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: GAP.md, fontSize: FONT_SIZE.md, fontFamily: FONT_SANS }} />
+            <Legend wrapperStyle={{ fontSize: FONT_SIZE.sm, fontFamily: FONT_SANS }} />
           </PieChart>
         </ResponsiveContainer>
       </div>
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 4, textAlign: "center" }}>来源分布</div>
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text4, marginBottom: GAP.xs, textAlign: "center" }}>来源分布</div>
         <ResponsiveContainer width="100%" height="90%">
           <PieChart>
             <Pie data={srcData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} dataKey="value" paddingAngle={3} strokeWidth={0}>
               {srcData.map((_, i) => <Cell key={i} fill={SRC_COLORS[i % SRC_COLORS.length]} />)}
             </Pie>
-            <Tooltip contentStyle={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 8, fontSize: 12, fontFamily: FONT_SANS }} />
-            <Legend wrapperStyle={{ fontSize: 11, fontFamily: FONT_SANS }} />
+            <Tooltip contentStyle={{ background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: GAP.md, fontSize: FONT_SIZE.md, fontFamily: FONT_SANS }} />
+            <Legend wrapperStyle={{ fontSize: FONT_SIZE.sm, fontFamily: FONT_SANS }} />
           </PieChart>
         </ResponsiveContainer>
       </div>

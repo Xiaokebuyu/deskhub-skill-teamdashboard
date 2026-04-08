@@ -3,6 +3,7 @@ import { SKILLS } from "../../constants/mock-data.js";
 import { getSkills, getRecentVersions } from "../../services/skillService.js";
 import { getStats, getHotEvents } from "../../services/umamiService.js";
 import { DashboardSkeleton, ErrorRetry } from "../../components/ui/Skeleton.jsx";
+import { COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 
 const USE_API = import.meta.env.VITE_USE_API !== 'false';
 import Stat from "../../components/ui/Stat.jsx";
@@ -129,7 +130,7 @@ export default function Dashboard() {
       ? rankByPopularity(skills)
       : rankByActivity(skills);
     return (
-      <div style={{ paddingTop: 16 }}>
+      <div style={{ paddingTop: GAP.xl }}>
         <CardBrowse
           status={browseGroup}
           skills={browseSkills}
@@ -149,13 +150,13 @@ export default function Dashboard() {
         <ErrorRetry message={`数据加载失败: ${error}`} onRetry={() => setRetryKey(k => k + 1)} />
       )}
       {(loading || (!loading && error && skills.length === 0)) ? null : <>
-      {error && <div style={{ color: '#b83a2a', fontSize: 12, marginBottom: 8 }}>部分数据加载失败</div>}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      {error && <div style={{ color: COLOR.error, fontSize: FONT_SIZE.md, marginBottom: GAP.md }}>部分数据加载失败</div>}
+      <div style={{ display: "flex", gap: GAP.md, marginBottom: GAP.lg }}>
         <Stat label="技能总数" value={skills.length} color="#6a5a42" />
-        <Stat label="进行中" value={activeCount || "—"} color="#b85c1a" />
+        <Stat label="进行中" value={activeCount || "—"} color={COLOR.warn} />
         <Stat label="已完成" value={doneCount || "—"} color="#4a7a4a" />
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: GAP.md, marginBottom: GAP.xl }}>
         <Stat label="总下载" value={skills.reduce((a, b) => a + (b.dl || 0), 0)} color="#6a5a42" />
         <Stat label="总查看" value="暂无数据" color="#aaa" />
         <Stat label="PV (本周)" value={fmtK(umamiStats?.pageviews?.value ?? umamiStats?.pageviews)} color={umamiStats ? "#5a7a5a" : "#aaa"} />
@@ -167,7 +168,7 @@ export default function Dashboard() {
 
       {/* 热门技能 */}
       <DeskRow
-        label="热门技能" labelColor="#b85c1a"
+        label="热门技能" labelColor={COLOR.warn}
         skills={popular}
         onSelect={handleSel}
         onViewAll={() => setBrowseGroup("popular")}
@@ -175,7 +176,7 @@ export default function Dashboard() {
 
       {/* 近期活跃 */}
       <DeskRow
-        label="近期活跃" labelColor="#3a6a3a"
+        label="近期活跃" labelColor={COLOR.plan}
         skills={active}
         onSelect={handleSel}
         onViewAll={() => setBrowseGroup("active")}

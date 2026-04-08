@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { X, Plus, Trash2, FileText } from "lucide-react";
-import { FONT_MONO, FONT_SANS } from "../../constants/theme.js";
+import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import StarRate from "../../components/ui/StarRate.jsx";
 import { FInput } from "../../components/ui/Form.jsx";
 import MarkdownInput from "../../components/ui/MarkdownInput.jsx";
@@ -75,7 +75,7 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: 480, maxHeight: "85vh",
-        background: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+        background: COLOR.gradModal,
         border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
         boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
         overflow: "hidden", display: "flex", flexDirection: "column",
@@ -85,75 +85,75 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
         {/* 标题栏 */}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "16px 20px 12px", borderBottom: "1px solid rgba(0,0,0,0.06)",
+          padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
           flexShrink: 0,
         }}>
-          <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 600, color: "#3a2a18" }}>评测打分</div>
+          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>评测打分</div>
           <div onClick={onClose} style={{
             width: 28, height: 28, borderRadius: 7,
             display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", background: "rgba(0,0,0,0.04)", transition: "background 0.15s",
+            cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
           }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.08)"}
-            onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
+            onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
+            onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
           >
-            <X size={14} color="#8a7a62" strokeWidth={1.5} />
+            <X size={14} color={COLOR.text5} strokeWidth={1.5} />
           </div>
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: "16px 20px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: `${GAP.xl}px ${GAP.xxl}px` }}>
           {/* 方案选择 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 8 }}>选择方案</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ marginBottom: GAP.xl }}>
+            <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.md }}>选择方案</div>
+            <div style={{ display: "flex", gap: GAP.md, flexWrap: "wrap" }}>
               {wo.variants.map(v => (
                 <div key={v.id} onClick={() => setSelVarId(v.id)} style={{
-                  padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-                  border: selVarId === v.id ? "2px solid #3a2a18" : "1px solid rgba(0,0,0,0.08)",
+                  padding: `${GAP.md}px ${GAP.lg}px`, borderRadius: GAP.md, cursor: "pointer",
+                  border: selVarId === v.id ? `2px solid ${COLOR.text}` : `1px solid ${COLOR.borderMd}`,
                   background: selVarId === v.id ? "rgba(45,36,24,0.06)" : "rgba(0,0,0,0.02)",
                   transition: "all 0.15s",
                 }}>
-                  <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18", fontWeight: 500 }}>{v.name}</div>
-                  <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888", marginTop: 2 }}>{v.uploader}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, fontWeight: 500 }}>{v.name}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginTop: 2 }}>{v.uploader}</div>
                 </div>
               ))}
             </div>
             {wo.variants.length === 0 && (
-              <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#b5a898" }}>暂无方案可评测</div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: "#b5a898" }}>暂无方案可评测</div>
             )}
           </div>
 
           {/* 逐项评分 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550", marginBottom: 10 }}>逐项评分</div>
+          <div style={{ marginBottom: GAP.xl }}>
+            <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.base }}>逐项评分</div>
             {activeDims.map(d => (
               <div key={d.id} style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
-                marginBottom: 10,
+                marginBottom: GAP.base,
               }}>
-                <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#4a4540" }}>{d.name}</span>
+                <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2 }}>{d.name}</span>
                 <StarRate value={scores[d.id] || 0} max={d.max} onChange={val => setScores(prev => ({ ...prev, [d.id]: val }))} />
               </div>
             ))}
           </div>
 
           {/* 测试人 + 评语 */}
-          <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: GAP.md }}>
             <FInput label="测试人" value={tester} onChange={e => setTester(e.target.value)} placeholder="你的名字" />
           </div>
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: GAP.xl }}>
             <FInput label="评语" value={comment} onChange={e => setComment(e.target.value)} placeholder="选填" multiline />
           </div>
 
           {/* 评测文档（Markdown，可多份） */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#5a5550" }}>
+          <div style={{ marginBottom: GAP.lg }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.md }}>
+              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3 }}>
                 评测文档 <span style={{ color: "#b5a898", fontWeight: 400 }}>（Markdown，选填，支持拖拽 .md 文件）</span>
               </div>
               <div onClick={addDoc} style={{
                 display: "flex", alignItems: "center", gap: 3,
-                fontFamily: FONT_SANS, fontSize: 12, color: "#5a7a9a",
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.blue,
                 cursor: "pointer", userSelect: "none",
               }}>
                 <Plus size={12} />添加文档
@@ -162,12 +162,12 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
 
             {evalDocs.map((doc, i) => (
               <div key={i} style={{
-                border: "1px solid rgba(0,0,0,0.08)", borderRadius: 10,
-                padding: 12, marginBottom: 8,
+                border: `1px solid ${COLOR.borderMd}`, borderRadius: GAP.base,
+                padding: GAP.lg, marginBottom: GAP.md,
                 background: "rgba(0,0,0,0.015)",
               }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                  <FileText size={13} color="#5a7a9a" />
+                <div style={{ display: "flex", gap: GAP.md, alignItems: "center", marginBottom: GAP.md }}>
+                  <FileText size={13} color={COLOR.blue} />
                   <input
                     value={doc.title}
                     onChange={e => updateDoc(i, "title", e.target.value)}
@@ -176,11 +176,11 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
                       flex: 1, padding: "4px 8px", border: "none",
                       borderBottom: "1px dashed rgba(0,0,0,0.1)",
                       background: "transparent", fontFamily: FONT_SANS,
-                      fontSize: 13, color: "#3a2a18", outline: "none",
+                      fontSize: FONT_SIZE.base, color: COLOR.text, outline: "none",
                     }}
                   />
                   <div onClick={() => removeDoc(i)} style={{ cursor: "pointer", display: "flex", padding: 2 }}>
-                    <Trash2 size={13} color="#b83a2a" />
+                    <Trash2 size={13} color={COLOR.error} />
                   </div>
                 </div>
                 <MarkdownInput
@@ -196,14 +196,14 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
               <div
                 onClick={addDoc}
                 style={{
-                  border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 8,
-                  padding: "10px", textAlign: "center", cursor: "pointer",
+                  border: "1px dashed rgba(0,0,0,0.1)", borderRadius: GAP.md,
+                  padding: `${GAP.base}px`, textAlign: "center", cursor: "pointer",
                   transition: "border-color 0.15s",
                 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(0,0,0,0.2)"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(0,0,0,0.1)"}
               >
-                <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#a09888" }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.sub }}>
                   点击添加 Markdown 评测文档
                 </div>
               </div>
@@ -212,14 +212,14 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
         </div>
 
         {/* 提交按钮 */}
-        <div style={{ padding: "0 20px 16px", flexShrink: 0 }}>
+        <div style={{ padding: `0 ${GAP.xxl}px ${GAP.xl}px`, flexShrink: 0 }}>
           <button onClick={handleSubmit} style={{
-            width: "100%", padding: "10px", borderRadius: 8,
+            width: "100%", padding: `${GAP.base}px`, borderRadius: GAP.md,
             cursor: allFilled ? "pointer" : "not-allowed",
-            fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500,
-            background: allFilled ? "#2d2418" : "rgba(0,0,0,0.04)",
-            color: allFilled ? "#f5f0e8" : "#b5b0a5",
-            border: allFilled ? "1px solid #2d2418" : "1px solid rgba(0,0,0,0.08)",
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 500,
+            background: allFilled ? COLOR.btn : COLOR.borderLt,
+            color: allFilled ? COLOR.btnText : "#b5b0a5",
+            border: allFilled ? `1px solid ${COLOR.btn}` : `1px solid ${COLOR.borderMd}`,
             opacity: allFilled ? 1 : 0.6,
             transition: "all 0.15s",
           }}>提交评测</button>

@@ -1,4 +1,4 @@
-import { FONT_MONO, FONT_SANS } from "../../../constants/theme.js";
+import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../../constants/theme.js";
 
 // 事件名 → 中文映射
 const EVENT_LABELS = {
@@ -37,43 +37,43 @@ export default function HotSearch({ searches, topSkills }) {
   const maxCount = data[0]?.count || 1;
 
   if (!hasReal && skills.length === 0) {
-    return <div style={{ color: '#aaa', fontSize: 13, textAlign: 'center', padding: 40 }}>暂无数据</div>;
+    return <div style={{ color: '#aaa', fontSize: FONT_SIZE.base, textAlign: 'center', padding: GAP.page }}>暂无数据</div>;
   }
 
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", gap: 24 }}>
       {/* 热门行为 */}
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 8 }}>
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text4, marginBottom: GAP.md }}>
           {hasReal ? '用户行为 Top 10' : '暂无行为数据'}
         </div>
         {hasReal && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: GAP.xs }}>
             {data.map((s, i) => (
-              <div key={s.term} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div key={s.term} style={{ display: "flex", alignItems: "center", gap: GAP.md }}>
                 <span style={{
-                  fontFamily: FONT_MONO, fontSize: 11, color: i < 3 ? "#b85c1a" : "#a09888",
+                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: i < 3 ? COLOR.warn : COLOR.sub,
                   width: 18, textAlign: "right", fontWeight: i < 3 ? 600 : 400,
                 }}>
                   {i + 1}
                 </span>
-                <div style={{ flex: 1, position: "relative", height: 20, borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ flex: 1, position: "relative", height: 20, borderRadius: GAP.xs, overflow: "hidden" }}>
                   <div style={{
                     position: "absolute", top: 0, left: 0, bottom: 0,
                     width: `${(s.count / maxCount) * 100}%`,
-                    background: i < 3 ? "rgba(184,92,26,0.15)" : "rgba(0,0,0,0.04)",
-                    borderRadius: 4,
+                    background: i < 3 ? "rgba(184,92,26,0.15)" : COLOR.borderLt,
+                    borderRadius: GAP.xs,
                     transition: "width 0.6s cubic-bezier(0.25, 1, 0.5, 1)",
                   }} />
                   <div style={{
                     position: "relative", zIndex: 1,
                     display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: "0 8px", height: 20,
+                    padding: `0 ${GAP.md}px`, height: 20,
                   }}>
-                    <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#4a4540" }}>
+                    <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text2 }}>
                       {EVENT_LABELS[s.term] || s.term}
                     </span>
-                    <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: "#a09888" }}>{s.count.toLocaleString()}</span>
+                    <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>{s.count.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -84,24 +84,24 @@ export default function HotSearch({ searches, topSkills }) {
 
       {/* 热门技能 */}
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: "#7a6a55", marginBottom: 8 }}>热门技能 Top 5</div>
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text4, marginBottom: GAP.md }}>热门技能 Top 5</div>
         {skills.length === 0
-          ? <div style={{ color: '#aaa', fontSize: 13 }}>暂无数据</div>
+          ? <div style={{ color: '#aaa', fontSize: FONT_SIZE.base }}>暂无数据</div>
           : skills.map((s, i) => (
             <div key={s.name} style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.04)",
+              display: "flex", alignItems: "center", gap: GAP.base,
+              padding: `${GAP.sm}px 0`, borderBottom: `1px solid ${COLOR.borderLt}`,
             }}>
               <span style={{
-                fontFamily: FONT_MONO, fontSize: 16, fontWeight: 600,
-                color: i === 0 ? "#8a6a3a" : i < 3 ? "#7a6a55" : "#a09888",
+                fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxl, fontWeight: 600,
+                color: i === 0 ? COLOR.brown : i < 3 ? COLOR.text4 : COLOR.sub,
                 width: 20, textAlign: "center",
               }}>
                 {i + 1}
               </span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: "#3a2a18" }}>{s.name}</div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: "#a09888" }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text }}>{s.name}</div>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>
                   {s.dl} 下载
                 </div>
               </div>
