@@ -9,9 +9,9 @@ export function FormModal({ title, show, onClose, children }) {
   </div>);
 }
 
-export function FInput({ label, value, onChange, placeholder, multiline }) {
+export function FInput({ label, value, onChange, placeholder, multiline, type = "text" }) {
   const s = { width: "100%", padding: `${GAP.md}px ${GAP.base}px`, background: "rgba(255,255,255,0.4)", border: `1px solid ${COLOR.border}`, borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.h2, color: COLOR.text, outline: "none", boxSizing: "border-box", resize: "vertical" };
-  return (<div style={{ marginBottom: GAP.lg }}><div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>{label}</div>{multiline ? <textarea value={value} onChange={onChange} placeholder={placeholder} rows={3} style={s} /> : <input value={value} onChange={onChange} placeholder={placeholder} style={s} />}</div>);
+  return (<div style={{ marginBottom: GAP.lg }}><div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>{label}</div>{multiline ? <textarea value={value} onChange={onChange} placeholder={placeholder} rows={3} style={s} /> : <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={s} />}</div>);
 }
 
 export function FSelect({ label, value, onChange, options }) {

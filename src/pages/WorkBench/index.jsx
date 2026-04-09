@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Flame, ScrollText, BadgeCheck } from "lucide-react";
+import { Flame, ScrollText, BadgeCheck, Upload, File, X } from "lucide-react";
 import { PLAN_PHASE, PLAN_RESULT } from "../../constants/status.js";
 import { PRI } from "../../constants/priority.js";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
@@ -15,6 +15,7 @@ import WoBrowse from "./WoBrowse.jsx";
 import WoFullPanel from "./WoFullPanel.jsx";
 import DocReader from "./DocReader.jsx";
 import ScorePanel from "./ScorePanel.jsx";
+import VariantManager from "./VariantManager.jsx";
 import useWorkOrders from "./useWorkOrders.js";
 import * as workApi from "../../services/workService.js";
 
@@ -25,7 +26,7 @@ const TYPE_OPTIONS = [
   { id: "mcp", label: "MCP" },
 ];
 
-export default function WorkBench({ plans, setPlans, role, dims, setDims, showDimMgr, setShowDimMgr }) {
+export default function WorkBench({ plans, setPlans, role, user, token, dims, setDims, showDimMgr, setShowDimMgr }) {
   const [typeFilter, setTypeFilter] = useState("skill");
   const [fMode, setFMode] = useState(null);
   const [fData, setFData] = useState({});
@@ -38,10 +39,26 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
   const [showFull, setShowFull] = useState(false);
   const [fullOriginRect, setFullOriginRect] = useState(null);
 
-  // DocReader + ScorePanel 状态
+  // DocReader + ScorePanel + VariantManager 状态
   const [docReaderData, setDocReaderData] = useState(null);
   const [showDocReader, setShowDocReader] = useState(false);
   const [showScorePanel, setShowScorePanel] = useState(false);
+  const [scoreEditData, setScoreEditData] = useState(null);
+  const [showVarMgr, setShowVarMgr] = useState(false);
+
+  // 添加方案附件上传
+  const addVarFileRef = useRef(null);
+  const handleAddVarFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    try {
+      const uploaded = await workApi.uploadFiles(files, token);
+      setFData(p => ({ ...p, attachments: [...(p.attachments || []), ...uploaded] }));
+    } catch (err) {
+      console.error("Upload failed:", err);
+    }
+    e.target.value = "";
+  };
 
   // 维度回滚机制
   const dimsSnapRef = useRef(null);
@@ -51,7 +68,7 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
     if (dimsSnapRef.current) setDims(dimsSnapRef.current);
   };
 
-  const ops = useWorkOrders(plans, setPlans, role);
+  const ops = useWorkOrders(plans, setPlans, role, user, token);
   const activeDims = dims.filter(d => d.active);
 
   // 按类型过滤
@@ -132,12 +149,22 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
   };
 
   // ScorePanel
-  const openScorePanel = () => setShowScorePanel(true);
-  const closeScorePanel = () => setShowScorePanel(false);
+  const openScorePanel = (editData) => {
+    setScoreEditData(editData || null);
+    setShowScorePanel(true);
+  };
+  const closeScorePanel = () => {
+    setShowScorePanel(false);
+    setTimeout(() => setScoreEditData(null), 400);
+  };
   const handleScoreSubmit = (planId, variantId, scoreEntries) => {
     ops.submitScores(planId, variantId, scoreEntries);
     setShowScorePanel(false);
   };
+
+  // VariantManager
+  const openVarMgr = () => setShowVarMgr(true);
+  const closeVarMgr = () => setShowVarMgr(false);
 
   // 表单操作 — mount 后下一帧再展开，确保入场动画生效
   const openForm = (mode, data) => {
@@ -154,7 +181,7 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
     name: "", type: typeFilter, status: "next", priority: "medium", desc: "",
     deadline: "", owner: "",
   });
-  const openAddVar = (wo) => openForm("addVar", { planId: wo.id, name: "", uploader: "", desc: "", link: "", content: "", showDocEditor: false });
+  const openAddVar = (wo) => openForm("addVar", { planId: wo.id, name: "", uploader: user, desc: "", link: "", content: "", attachments: [], showDocEditor: false });
   const openMarkComplete = (wo) => {
     const activeDimsLocal = dims.filter(d => d.active);
     const vars = wo?.variants || [];
@@ -186,7 +213,7 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
     setDims(prev => [...prev, dim]);
     setNewDim("");
     if (USE_API) {
-      workApi.createDimension({ name: dim.name, max: dim.max }, role)
+      workApi.createDimension({ name: dim.name, max: dim.max }, token)
         .then(serverDim => {
           setDims(prev => prev.map(d => d.id === tempId ? { ...d, id: serverDim.id } : d));
         })
@@ -199,18 +226,18 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
   const delDim = id => {
     snapDims();
     setDims(prev => prev.filter(d => d.id !== id));
-    if (USE_API) workApi.deleteDimension(id, role).catch(rollbackDims);
+    if (USE_API) workApi.deleteDimension(id, token).catch(rollbackDims);
   };
   const toggleDim = id => {
     snapDims();
     const current = dims.find(d => d.id === id);
     setDims(prev => prev.map(d => d.id === id ? { ...d, active: !d.active } : d));
-    if (USE_API) workApi.editDimension(id, { active: !(current?.active) }, role).catch(rollbackDims);
+    if (USE_API) workApi.editDimension(id, { active: !(current?.active) }, token).catch(rollbackDims);
   };
   const editDim = (id, field, val) => {
     snapDims();
     setDims(prev => prev.map(d => d.id === id ? { ...d, [field]: val } : d));
-    if (USE_API) workApi.editDimension(id, { [field]: val }, role).catch(rollbackDims);
+    if (USE_API) workApi.editDimension(id, { [field]: val }, token).catch(rollbackDims);
   };
 
   // 浏览模式
@@ -223,13 +250,22 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
       <>
         <WoBrowse label={browseSection === "active" ? "进行中" : browseSection === "next" ? "下期规划" : "已完成"} wos={bWos} onBack={() => setBrowseSection(null)} onSelect={handleExpandFull} />
         <WoFullPanel wo={fullWo} dims={dims} show={showFull} originRect={fullOriginRect} onClose={handleCloseFull}
-          role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
+          role={role} user={user} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
           onOpenScorePanel={openScorePanel} onOpenDocReader={openDocReader}
           onActivate={wo => ops.activatePlan(wo.id)}
-          onReopen={wo => ops.reopenPlan(wo.id)} />
+          onReopen={wo => ops.reopenPlan(wo.id)}
+          onOpenVariantManager={openVarMgr}
+          onEditScore={(data) => openScorePanel(data)}
+          onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />
         {formUI()}
         {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
-        {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
+        {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims}
+        onSubmitScores={handleScoreSubmit} editData={scoreEditData} role={role} user={user}
+        onEditScore={(planId, variantId, scoreId, data) => ops.editScore(planId, variantId, scoreId, data)}
+        onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />}
+      {fullWo && <VariantManager show={showVarMgr} onClose={closeVarMgr} wo={fullWo} role={role} user={user} token={token} dims={dims}
+        onEditVariant={(planId, variantId, data) => ops.editVariant(planId, variantId, data)}
+        onDeleteVariant={(planId, variantId) => ops.deleteVariant(planId, variantId)} />}
       </>
     );
   }
@@ -287,7 +323,10 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
             </>}
             {fMode === "addVar" && <>
               <FInput label="方案名称" value={fData.name} onChange={e => setFData(p => ({ ...p, name: e.target.value }))} placeholder="如 NotebookLM 方案" />
-              <FInput label="上传人" value={fData.uploader} onChange={e => setFData(p => ({ ...p, uploader: e.target.value }))} />
+              <div style={{ marginBottom: GAP.lg }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>提交人</div>
+                <div style={{ padding: `${GAP.md}px ${GAP.base}px`, background: "rgba(0,0,0,0.03)", borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text }}>{user}</div>
+              </div>
               <FInput label="方案说明" value={fData.desc} onChange={e => setFData(p => ({ ...p, desc: e.target.value }))} placeholder="简述技术路线、优缺点等" multiline />
               <FInput label="外部链接" value={fData.link} onChange={e => setFData(p => ({ ...p, link: e.target.value }))} placeholder="参考文档 URL（选填）" />
               {/* 方案文档 — Markdown 内容编辑 */}
@@ -311,6 +350,39 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
                     minHeight={160}
                   />
                 )}
+              </div>
+              {/* 附件上传 */}
+              <div style={{ marginBottom: GAP.lg }}>
+                <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.md }}>附件</div>
+                {(fData.attachments || []).map((att, idx) => (
+                  <div key={idx} style={{
+                    display: "flex", alignItems: "center", gap: GAP.md,
+                    padding: `${GAP.sm}px ${GAP.base}px`,
+                    background: "rgba(0,0,0,0.02)", borderRadius: GAP.sm,
+                    marginBottom: GAP.xs,
+                  }}>
+                    <File size={13} color={COLOR.blue} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {att.originalName || att.path}
+                    </span>
+                    <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub, flexShrink: 0 }}>
+                      {att.size ? (att.size / 1024).toFixed(1) + "KB" : ""}
+                    </span>
+                    <div onClick={() => setFData(p => ({ ...p, attachments: p.attachments.filter((_, i) => i !== idx) }))}
+                      style={{ cursor: "pointer", display: "flex", padding: 2, flexShrink: 0 }}>
+                      <X size={12} color={COLOR.error} />
+                    </div>
+                  </div>
+                ))}
+                <div onClick={() => addVarFileRef.current?.click()}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: GAP.xs,
+                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.blue,
+                    cursor: "pointer", userSelect: "none", padding: `${GAP.xs}px 0`,
+                  }}>
+                  <Upload size={12} /><span>上传文件</span>
+                </div>
+                <input ref={addVarFileRef} type="file" multiple style={{ display: "none" }} onChange={handleAddVarFiles} />
               </div>
             </>}
             {fMode === "complete" && <>
@@ -490,17 +562,26 @@ export default function WorkBench({ plans, setPlans, role, dims, setDims, showDi
 
       {/* FullPanel 第三层 */}
       <WoFullPanel wo={fullWo} dims={dims} show={showFull} originRect={fullOriginRect} onClose={handleCloseFull}
-        role={role} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
+        role={role} user={user} onAddVariant={openAddVar} onMarkComplete={openMarkComplete}
         onOpenScorePanel={openScorePanel} onOpenDocReader={openDocReader}
         onActivate={wo => ops.activatePlan(wo.id)}
-        onReopen={wo => ops.reopenPlan(wo.id)} />
+        onReopen={wo => ops.reopenPlan(wo.id)}
+        onOpenVariantManager={openVarMgr}
+        onEditScore={(data) => openScorePanel(data)}
+        onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />
 
       {/* 表单 */}
       {formUI()}
 
       {/* DocReader + ScorePanel */}
       {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
-      {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims} onSubmitScores={handleScoreSubmit} />}
+      {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims}
+        onSubmitScores={handleScoreSubmit} editData={scoreEditData} role={role} user={user}
+        onEditScore={(planId, variantId, scoreId, data) => ops.editScore(planId, variantId, scoreId, data)}
+        onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />}
+      {fullWo && <VariantManager show={showVarMgr} onClose={closeVarMgr} wo={fullWo} role={role} user={user} token={token} dims={dims}
+        onEditVariant={(planId, variantId, data) => ops.editVariant(planId, variantId, data)}
+        onDeleteVariant={(planId, variantId) => ops.deleteVariant(planId, variantId)} />}
 
       {/* 维度管理 — z-800 弹窗，带展开/收起动画 */}
       {showDimMgr && (

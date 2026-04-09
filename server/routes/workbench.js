@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import db from '../db/init.js';
 import { wrapResponse } from '../utils/meta.js';
+import { requireRole } from '../middleware/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, '..', 'uploads');
@@ -17,16 +18,12 @@ const router = Router();
 const uid = () => crypto.randomUUID().slice(0, 8);
 const local = (data) => wrapResponse(data, { source: 'local' });
 
-// --- 角色校验中间件 ---
-function requireRole(...allowed) {
-  return (req, res, next) => {
-    const role = req.headers['x-role'] || 'member';
-    if (!allowed.includes(role)) {
-      return res.status(403).json({ error: `角色 ${role} 无权执行此操作` });
-    }
-    req.role = role;
-    next();
-  };
+// --- 定稿锁定校验 ---
+function checkPlanNotDone(planId) {
+  const plan = db.prepare('SELECT status FROM plans WHERE id = ?').get(planId);
+  return plan && plan.status === 'done'
+    ? '工单已定稿，请先撤销定稿再操作'
+    : null;
 }
 
 // ============================================================
@@ -52,7 +49,7 @@ router.get('/plans', (req, res) => {
     const scoreMap = {};
     for (const s of scores) {
       (scoreMap[s.variant_id] ??= []).push({
-        tester: s.tester, dimId: s.dim_id, value: s.value,
+        id: s.id, tester: s.tester, dimId: s.dim_id, value: s.value,
         comment: s.comment, date: fmtDate(s.created_at), evalDoc: s.eval_doc,
       });
     }
@@ -63,6 +60,7 @@ router.get('/plans', (req, res) => {
         id: v.id, name: v.name, uploader: v.uploader,
         uploaded: fmtDate(v.uploaded_at), desc: v.description,
         link: v.link, content: v.content,
+        attachments: parseJSON(v.attachments),
         scores: scoreMap[v.id] || [],
       });
     }
@@ -190,18 +188,22 @@ router.post('/plans/:planId/variants', requireRole('admin', 'tester', 'member'),
     const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
     if (!plan) return res.status(404).json({ error: '工单不存在' });
 
-    const { name, uploader, desc = '', link = '', content = null } = req.body;
+    const lockMsg = checkPlanNotDone(planId);
+    if (lockMsg) return res.status(403).json({ error: lockMsg });
+
+    const { name, uploader, desc = '', link = '', content = null, attachments = '' } = req.body;
     if (!name || !uploader) return res.status(400).json({ error: 'name 和 uploader 必填' });
 
     const id = 'v' + uid();
-    db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, planId, name, uploader, desc, link, content);
+    const attStr = typeof attachments === 'string' ? attachments : JSON.stringify(attachments);
+    db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, planId, name, uploader, desc, link, content, attStr);
 
     const v = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
     res.status(201).json(local({
       id: v.id, name: v.name, uploader: v.uploader,
       uploaded: fmtDate(v.uploaded_at), desc: v.description,
-      link: v.link, content: v.content, scores: [],
+      link: v.link, content: v.content, attachments: parseJSON(v.attachments), scores: [],
     }));
   } catch (err) {
     console.error('[variants/create]', err.message);
@@ -213,13 +215,29 @@ router.post('/plans/:planId/variants', requireRole('admin', 'tester', 'member'),
 router.put('/variants/:id', requireRole('admin', 'tester', 'member'), (req, res) => {
   try {
     const { id } = req.params;
-    const { name, desc, link, content } = req.body;
+    const variant = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
+    if (!variant) return res.status(404).json({ error: '方案不存在' });
+
+    // 定稿锁定
+    const lockMsg = checkPlanNotDone(variant.plan_id);
+    if (lockMsg) return res.status(403).json({ error: lockMsg });
+
+    // 归属校验：非 admin 只能编辑自己的方案
+    if (req.role !== 'admin' && variant.uploader !== req.user) {
+      return res.status(403).json({ error: '只能编辑自己的方案' });
+    }
+
+    const { name, desc, link, content, attachments } = req.body;
     const sets = [];
     const vals = [];
     if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
     if (desc !== undefined) { sets.push('description = ?'); vals.push(desc); }
     if (link !== undefined) { sets.push('link = ?'); vals.push(link); }
     if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+    if (attachments !== undefined) {
+      sets.push('attachments = ?');
+      vals.push(typeof attachments === 'string' ? attachments : JSON.stringify(attachments));
+    }
     if (sets.length === 0) return res.status(400).json({ error: '无更新字段' });
 
     sets.push("updated_at = datetime('now')");
@@ -232,10 +250,30 @@ router.put('/variants/:id', requireRole('admin', 'tester', 'member'), (req, res)
 });
 
 // --- DELETE /api/variants/:id ---
-router.delete('/variants/:id', requireRole('admin'), (req, res) => {
+router.delete('/variants/:id', requireRole('admin', 'tester', 'member'), (req, res) => {
   try {
-    db.prepare('DELETE FROM scores WHERE variant_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM variants WHERE id = ?').run(req.params.id);
+    const { id } = req.params;
+    const variant = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
+    if (!variant) return res.status(404).json({ error: '方案不存在' });
+
+    // 定稿锁定
+    const lockMsg = checkPlanNotDone(variant.plan_id);
+    if (lockMsg) return res.status(403).json({ error: lockMsg });
+
+    if (req.role !== 'admin') {
+      // 归属校验
+      if (variant.uploader !== req.user) {
+        return res.status(403).json({ error: '只能删除自己的方案' });
+      }
+      // 未评分校验
+      const scoreCount = db.prepare('SELECT COUNT(*) AS n FROM scores WHERE variant_id = ?').get(id).n;
+      if (scoreCount > 0) {
+        return res.status(403).json({ error: '方案已有评分，无法删除' });
+      }
+    }
+
+    db.prepare('DELETE FROM scores WHERE variant_id = ?').run(id);
+    db.prepare('DELETE FROM variants WHERE id = ?').run(id);
     res.json(local({ ok: true }));
   } catch (err) {
     console.error('[variants/delete]', err.message);
@@ -253,6 +291,9 @@ router.post('/variants/:variantId/scores', requireRole('admin', 'tester'), (req,
     const { variantId } = req.params;
     const variant = db.prepare('SELECT * FROM variants WHERE id = ?').get(variantId);
     if (!variant) return res.status(404).json({ error: '方案不存在' });
+
+    const lockMsg = checkPlanNotDone(variant.plan_id);
+    if (lockMsg) return res.status(403).json({ error: lockMsg });
 
     const { tester, scores, evalDoc } = req.body;
     if (!tester || !Array.isArray(scores) || scores.length === 0) {
@@ -273,16 +314,85 @@ router.post('/variants/:variantId/scores', requireRole('admin', 'tester'), (req,
     }
 
     const insert = db.prepare(`INSERT INTO scores (id, variant_id, plan_id, tester, dim_id, value, comment, eval_doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    const created = [];
     const insertMany = db.transaction((entries) => {
       for (const s of entries) {
-        insert.run('s' + uid(), variantId, variant.plan_id, tester, s.dim_id, s.value, s.comment || '', evalDoc || null);
+        const id = 's' + uid();
+        insert.run(id, variantId, variant.plan_id, tester, s.dim_id, s.value, s.comment || '', evalDoc || null);
+        created.push({ id, tester, dimId: s.dim_id, value: s.value, comment: s.comment || '', evalDoc: evalDoc || null });
       }
     });
     insertMany(scores);
 
-    res.status(201).json(local({ ok: true, count: scores.length }));
+    res.status(201).json(local({ scores: created }));
   } catch (err) {
     console.error('[scores/submit]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- PUT /api/scores/:id --- 编辑单条评分
+router.put('/scores/:id', requireRole('admin', 'tester'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const score = db.prepare('SELECT * FROM scores WHERE id = ?').get(id);
+    if (!score) return res.status(404).json({ error: '评分不存在' });
+
+    // 定稿锁定
+    const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(score.plan_id);
+    if (plan && plan.status === 'done') {
+      return res.status(403).json({ error: '工单已定稿，无法编辑评分' });
+    }
+
+    // 归属校验：非 admin 只能改自己的
+    if (req.role !== 'admin' && score.tester !== req.user) {
+      return res.status(403).json({ error: '只能编辑自己的评分' });
+    }
+
+    const { value, comment, evalDoc } = req.body;
+    const sets = [];
+    const vals = [];
+    if (value !== undefined) {
+      const dim = db.prepare('SELECT * FROM dimensions WHERE id = ?').get(score.dim_id);
+      if (dim && (value < 0 || value > dim.max)) {
+        return res.status(400).json({ error: `维度 ${dim.name} 满分为 ${dim.max}，提交值 ${value} 越界` });
+      }
+      sets.push('value = ?'); vals.push(value);
+    }
+    if (comment !== undefined) { sets.push('comment = ?'); vals.push(comment); }
+    if (evalDoc !== undefined) { sets.push('eval_doc = ?'); vals.push(evalDoc); }
+    if (sets.length === 0) return res.status(400).json({ error: '无更新字段' });
+
+    db.prepare(`UPDATE scores SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
+    res.json(local({ ok: true }));
+  } catch (err) {
+    console.error('[scores/edit]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DELETE /api/scores/:id --- 删除单条评分
+router.delete('/scores/:id', requireRole('admin', 'tester'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const score = db.prepare('SELECT * FROM scores WHERE id = ?').get(id);
+    if (!score) return res.status(404).json({ error: '评分不存在' });
+
+    // 定稿锁定
+    const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(score.plan_id);
+    if (plan && plan.status === 'done') {
+      return res.status(403).json({ error: '工单已定稿，无法删除评分' });
+    }
+
+    // 归属校验：非 admin 只能删自己的
+    if (req.role !== 'admin' && score.tester !== req.user) {
+      return res.status(403).json({ error: '只能删除自己的评分' });
+    }
+
+    db.prepare('DELETE FROM scores WHERE id = ?').run(id);
+    res.json(local({ ok: true }));
+  } catch (err) {
+    console.error('[scores/delete]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -358,14 +468,16 @@ router.delete('/dimensions/:id', requireRole('admin'), (req, res) => {
 //  文件上传
 // ============================================================
 
-// --- POST /api/upload --- 单文件上传
-router.post('/upload', upload.single('file'), (req, res) => {
+// --- POST /api/upload --- 多文件上传（最多 10 个）
+router.post('/upload', upload.array('files', 10), (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: '未选择文件' });
-    const { originalname, filename, size } = req.file;
-    const path = `uploads/eval/${filename}`;
-    console.log(`[upload] ${originalname} → ${path} (${(size / 1024).toFixed(1)}KB)`);
-    res.json(local({ path, originalName: originalname, size }));
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: '未选择文件' });
+    const result = req.files.map(f => {
+      const path = `uploads/eval/${f.filename}`;
+      console.log(`[upload] ${f.originalname} → ${path} (${(f.size / 1024).toFixed(1)}KB)`);
+      return { path, originalName: f.originalname, size: f.size };
+    });
+    res.json(local(result));
   } catch (err) {
     console.error('[upload]', err.message);
     res.status(500).json({ error: err.message });
@@ -379,6 +491,13 @@ router.use('/uploads', expressModule.static(UPLOAD_DIR));
 // ============================================================
 //  工具函数
 // ============================================================
+
+/** 安全解析 JSON，失败返回 [] */
+function parseJSON(str) {
+  if (!str) return [];
+  try { const r = JSON.parse(str); return Array.isArray(r) ? r : []; }
+  catch { return []; }
+}
 
 /** ISO datetime → "MM-DD" */
 function fmtDate(iso) {

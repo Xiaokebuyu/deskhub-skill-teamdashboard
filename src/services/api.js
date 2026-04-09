@@ -4,12 +4,11 @@
  */
 const BASE = import.meta.env.VITE_API_BASE || '';
 
-export async function get(path, opts = {}) {
+export async function get(path, token, opts = {}) {
   const url = `${BASE}${path}`;
-  const res = await fetch(url, {
-    signal: opts.signal,
-    headers: { Accept: 'application/json' },
-  });
+  const headers = { Accept: 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(url, { signal: opts.signal, headers });
   if (!res.ok) throw new Error(`API ${res.status}: ${url}`);
   return res.json();
 }

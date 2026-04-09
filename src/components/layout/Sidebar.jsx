@@ -1,37 +1,56 @@
-import { useState } from "react";
-import { ChevronLeft, ChevronUp, BadgeCheck, Settings2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ChevronLeft, LogOut, Settings2, Users, KeyRound, ChevronUp } from "lucide-react";
 import { TABS } from "../../constants/tabs.js";
 import { ROLES } from "../../constants/roles.js";
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from "../../constants/theme.js";
 
 const COLLAPSED_W = 56;
 const EASE = "0.3s cubic-bezier(0.25, 1, 0.5, 1)";
-// ─── 固定宽度图标列：展开/收起时图标零位移 ───
-const COL_PAD = 4;                           // 所有区域统一水平 padding
-const ICON_COL = COLLAPSED_W - COL_PAD * 2;  // 48px — 图标列宽度
-// 图标居中于 ICON_COL → 中心始终在 COL_PAD + ICON_COL/2 = 4+24 = 28px = COLLAPSED_W/2
+const COL_PAD = 4;
+const ICON_COL = COLLAPSED_W - COL_PAD * 2;
 
-export default function Sidebar({ tab, setTab, role, setRole, collapsed, setCollapsed, onResetBrowse, onOpenDimMgr }) {
-  const [roleOpen, setRoleOpen] = useState(false);
+export default function Sidebar({ tab, setTab, role, user, onLogout, collapsed, setCollapsed, onResetBrowse, onOpenDimMgr, onOpenUserMgr, onOpenChangePwd }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Sidebar 收起时自动关闭抽屉
+  useEffect(() => {
+    if (collapsed) setDrawerOpen(false);
+  }, [collapsed]);
 
   const iconCol = { width: ICON_COL, display: "flex", justifyContent: "center", alignItems: "center", flexShrink: 0 };
 
+  // 构建菜单项（按角色动态）
+  const menuItems = [];
+  if (onOpenUserMgr) menuItems.push({ icon: Users, label: "用户管理", onClick: onOpenUserMgr });
+  if (onOpenChangePwd) menuItems.push({ icon: KeyRound, label: "修改密码", onClick: onOpenChangePwd });
+  if (onOpenDimMgr) menuItems.push({ icon: Settings2, label: "维度设置", onClick: onOpenDimMgr });
+  if (onLogout) menuItems.push({ icon: LogOut, label: "退出登录", onClick: onLogout, danger: true });
+
+  const handleMenuItem = (item) => {
+    setDrawerOpen(false);
+    // 延迟执行回调，让抽屉动画先走
+    setTimeout(() => item.onClick(), 150);
+  };
+
   return (
-    <div style={{
-      width: collapsed ? COLLAPSED_W : 200, flexShrink: 0,
-      background: COLOR.bgSide,
-      borderRight: `1px solid ${COLOR.border}`,
-      display: "flex", flexDirection: "column",
-      transition: `width ${EASE}`,
-      overflow: "hidden", position: "relative",
-    }}>
-      {/* 折叠按钮 — 展开右对齐 / 收起居中 */}
+    <div
+      onClick={() => { if (drawerOpen) setDrawerOpen(false); }}
+      style={{
+        width: collapsed ? COLLAPSED_W : 200, flexShrink: 0,
+        background: COLOR.bgSide,
+        borderRight: `1px solid ${COLOR.border}`,
+        display: "flex", flexDirection: "column",
+        transition: `width ${EASE}`,
+        overflow: "hidden", position: "relative",
+      }}
+    >
+      {/* 折叠按钮 */}
       <div style={{
         padding: collapsed ? `${GAP.lg}px 0` : `${GAP.lg}px 14px ${GAP.lg}px 0`,
         display: "flex", justifyContent: collapsed ? "center" : "flex-end",
         transition: `padding ${EASE}`,
       }}>
-        <button onClick={() => setCollapsed(c => !c)} style={{
+        <button onClick={(e) => { e.stopPropagation(); setCollapsed(c => !c); }} style={{
           width: 30, height: 30, border: `1px solid ${COLOR.border}`, borderRadius: GAP.md,
           background: COLOR.bgWhite, cursor: "pointer", color: COLOR.text5,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -44,7 +63,7 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
         </button>
       </div>
 
-      {/* 品牌区 — SVG 在 ICON_COL 内居中 */}
+      {/* 品牌区 */}
       <div style={{
         padding: `${GAP.base}px ${COL_PAD}px ${GAP.lg}px`,
         borderBottom: "1px solid rgba(0,0,0,0.05)",
@@ -75,12 +94,12 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
         )}
       </div>
 
-      {/* 导航区 — icon 16px 在 ICON_COL 内居中 */}
+      {/* 导航区 */}
       <div style={{ padding: `${GAP.lg}px ${COL_PAD}px`, flex: 1 }}>
         {TABS.map(t => {
           const on = tab === t.id;
           return (
-            <button key={t.id} onClick={() => { setTab(t.id); onResetBrowse(); }} title={collapsed ? t.label : undefined}
+            <button key={t.id} onClick={(e) => { e.stopPropagation(); setTab(t.id); onResetBrowse(); }} title={collapsed ? t.label : undefined}
               style={{
                 display: "flex", alignItems: "center",
                 width: "100%", padding: `${GAP.base}px 0`,
@@ -105,137 +124,98 @@ export default function Sidebar({ tab, setTab, role, setRole, collapsed, setColl
         })}
       </div>
 
-      {/* 身份区 */}
+      {/* 身份区 — 用户卡片 + 上拉抽屉 */}
       <div style={{
         borderTop: "1px solid rgba(0,0,0,0.07)",
         background: "rgba(255,255,255,0.5)",
         boxShadow: "0 -2px 8px rgba(0,0,0,0.03)",
         position: "relative",
       }}>
-        {/* 角色选择弹出面板 — 展开 */}
-        {roleOpen && !collapsed && (
-          <div style={{
-            position: "absolute", bottom: "100%", left: 0, right: 0,
-            background: COLOR.bgModal, borderTop: `1px solid ${COLOR.border}`,
-            boxShadow: `0 -4px 16px ${COLOR.borderMd}`,
-            padding: `${GAP.md}px ${GAP.sm}px`,
-            animation: "roleSlideUp 0.2s ease-out",
-          }}>
-            <style>{`@keyframes roleSlideUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }`}</style>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, padding: `${GAP.xs}px ${GAP.md}px ${GAP.sm}px`, letterSpacing: 1 }}>切换角色</div>
-            {ROLES.map(r => {
-              const active = role === r.id;
-              return (
-                <button key={r.id} onClick={() => { setRole(r.id); setRoleOpen(false); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: GAP.md, width: "100%",
-                    padding: `${GAP.md}px`, marginBottom: 2,
-                    background: active ? r.bg : "transparent",
-                    border: active ? `1px solid ${r.color}30` : "1px solid transparent",
-                    borderRadius: GAP.md, cursor: "pointer",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
-                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                >
-                  <div style={{
-                    width: 28, height: 28, borderRadius: "50%",
-                    background: active ? r.color : "#d5d0c8",
-                    color: COLOR.bgWhite, display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.2s",
-                  }}>
-                    <r.Icon size={13} strokeWidth={2} />
-                  </div>
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: active ? 600 : 400, color: active ? r.color : "#6a5a42" }}>{r.label}</div>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>{r.desc}</div>
-                  </div>
-                  {active && <BadgeCheck size={13} style={{ color: r.color, flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {/* 角色选择弹出面板 — 收起 */}
-        {roleOpen && collapsed && (
-          <div style={{
-            position: "absolute", bottom: 0, left: COLLAPSED_W,
-            background: COLOR.bgModal, border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: GAP.base, boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-            padding: `${GAP.md}px ${GAP.sm}px`, width: 180, zIndex: 100,
-            animation: "roleSlideUp 0.2s ease-out",
-          }}>
-            <style>{`@keyframes roleSlideUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }`}</style>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, padding: `${GAP.xs}px ${GAP.md}px ${GAP.sm}px`, letterSpacing: 1 }}>切换角色</div>
-            {ROLES.map(r => {
-              const active = role === r.id;
-              return (
-                <button key={r.id} onClick={() => { setRole(r.id); setRoleOpen(false); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: GAP.md, width: "100%",
-                    padding: `${GAP.md}px`, marginBottom: 2,
-                    background: active ? r.bg : "transparent",
-                    border: active ? `1px solid ${r.color}30` : "1px solid transparent",
-                    borderRadius: GAP.md, cursor: "pointer", transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
-                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                >
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: active ? r.color : "#d5d0c8", color: COLOR.bgWhite, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <r.Icon size={11} strokeWidth={2} />
-                  </div>
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: active ? 600 : 400, color: active ? r.color : "#6a5a42" }}>{r.label}</div>
-                  </div>
-                  {active && <BadgeCheck size={12} style={{ color: r.color, flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {/* 当前角色 — avatar 在 ICON_COL 内居中 */}
-        <div style={{ display: "flex", alignItems: "center", minWidth: 0, padding: `${GAP.md}px ${COL_PAD}px` }}>
-          <button onClick={() => setRoleOpen(o => !o)} style={{
-            display: "flex", alignItems: "center", flex: 1, minWidth: 0,
-            padding: `${GAP.xs}px 0`,
-            background: "none", border: "none", cursor: "pointer",
-          }}>
-            <div style={iconCol}>
-              {(() => { const cr = ROLES.find(r => r.id === role); return (
-                <div style={{
-                  width: 34, height: 34, borderRadius: "50%",
-                  background: cr.color, color: COLOR.bgWhite,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  flexShrink: 0, boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
-                  transition: `background ${EASE}`,
-                }}>
-                  <cr.Icon size={15} strokeWidth={2} />
-                </div>
-              ); })()}
-            </div>
-            {!collapsed && (() => { const cr = ROLES.find(r => r.id === role); return (<>
-              <div style={{ flex: 1, textAlign: "left", minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 600, color: COLOR.btn, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cr.label}</div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cr.desc}</div>
+        {/* 抽屉 — 从卡片上方滑出 */}
+        <div style={{
+          overflow: "hidden",
+          maxHeight: drawerOpen ? menuItems.length * 40 + 8 : 0,
+          opacity: drawerOpen ? 1 : 0,
+          transition: drawerOpen
+            ? "max-height 0.25s ease-out, opacity 0.2s ease-out"
+            : "max-height 0.2s ease-in, opacity 0.15s ease-in",
+          borderBottom: drawerOpen ? `1px solid ${COLOR.border}` : "1px solid transparent",
+        }}>
+          <div style={{ padding: `${GAP.xs}px ${GAP.sm}px` }}>
+            {menuItems.map((item, i) => (
+              <div
+                key={i}
+                onClick={(e) => { e.stopPropagation(); handleMenuItem(item); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: GAP.md,
+                  padding: `${GAP.md}px ${GAP.base}px`,
+                  borderRadius: GAP.sm, cursor: "pointer",
+                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.base,
+                  color: COLOR.text3,
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = item.danger ? "rgba(184,58,42,0.06)" : "rgba(0,0,0,0.05)";
+                  e.currentTarget.style.color = item.danger ? COLOR.error : COLOR.text;
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = COLOR.text3;
+                }}
+              >
+                <item.icon size={15} strokeWidth={1.5} />
+                <span>{item.label}</span>
               </div>
-              <ChevronUp size={12} style={{ color: COLOR.sub, flexShrink: 0, transform: roleOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-            </>); })()}
-          </button>
-          {/* 维度设置 — 角色栏右侧常驻按钮 */}
-          {onOpenDimMgr && !collapsed && (
-            <div onClick={e => { e.stopPropagation(); onOpenDimMgr(); }} title="评分维度设置" style={{
-              width: 30, height: 30, borderRadius: GAP.md, marginRight: GAP.xs,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", color: COLOR.sub,
-              background: "rgba(0,0,0,0.03)",
-              border: "1px solid rgba(0,0,0,0.05)",
-              transition: "all 0.15s", flexShrink: 0,
-            }}
-              onMouseEnter={e => { e.currentTarget.style.color = COLOR.text; e.currentTarget.style.background = "rgba(0,0,0,0.07)"; }}
-              onMouseLeave={e => { e.currentTarget.style.color = COLOR.sub; e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
-            >
-              <Settings2 size={14} strokeWidth={1.5} />
-            </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 用户卡片（可点击） */}
+        <div
+          onClick={(e) => { e.stopPropagation(); if (!collapsed) setDrawerOpen(d => !d); }}
+          style={{
+            display: "flex", alignItems: "center", minWidth: 0,
+            padding: `${GAP.md}px ${COL_PAD}px`,
+            cursor: collapsed ? "default" : "pointer",
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={e => { if (!collapsed) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
+          {/* 头像 */}
+          <div style={iconCol}>
+            {(() => { const cr = ROLES.find(r => r.id === role) || ROLES[2]; return (
+              <div style={{
+                width: 34, height: 34, borderRadius: "50%",
+                background: cr.color, color: COLOR.bgWhite,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0, boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+                transition: `background ${EASE}`,
+              }}>
+                <cr.Icon size={15} strokeWidth={2} />
+              </div>
+            ); })()}
+          </div>
+          {/* 用户名 + 角色 + 展开箭头 */}
+          {!collapsed && (
+            <>
+              <div style={{ flex: 1, textAlign: "left", minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 600, color: COLOR.btn, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {user?.displayName || user?.username || '未登录'}
+                </div>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {(ROLES.find(r => r.id === role) || {}).label || role}
+                </div>
+              </div>
+              <div style={{
+                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 24, height: 24, color: COLOR.dim,
+                transition: "transform 0.25s ease, color 0.15s",
+                transform: drawerOpen ? "rotate(0deg)" : "rotate(180deg)",
+              }}>
+                <ChevronUp size={14} strokeWidth={1.5} />
+              </div>
+            </>
           )}
         </div>
       </div>

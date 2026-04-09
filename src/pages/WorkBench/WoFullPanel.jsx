@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, FileText, Play, ClipboardCheck, Star, RotateCcw, ExternalLink } from "lucide-react";
+import { Plus, FileText, Play, ClipboardCheck, Star, RotateCcw, ExternalLink, Pencil, Trash2, File, Download } from "lucide-react";
 import Markdown from "react-markdown";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { PRI } from "../../constants/priority.js";
@@ -12,7 +12,7 @@ import ComparisonTable from "./ComparisonTable.jsx";
 /**
  * 第三层完整面板 — 纯信息展示 + 单角色按钮
  */
-export default function WoFullPanel({ wo, dims, show, originRect, onClose, role, onAddVariant, onMarkComplete, onOpenScorePanel, onOpenDocReader, onActivate, onReopen }) {
+export default function WoFullPanel({ wo, dims, show, originRect, onClose, role, user, onAddVariant, onMarkComplete, onOpenScorePanel, onOpenDocReader, onActivate, onReopen, onOpenVariantManager, onEditScore, onDeleteScore }) {
   const [expandedVar, setExpandedVar] = useState(null);
   const activeDims = (dims || []).filter(d => d.active);
 
@@ -97,11 +97,46 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
             </div>
           )}
 
+          {/* 附件列表 */}
+          {v.attachments && v.attachments.length > 0 && (
+            <div style={{ marginBottom: GAP.lg }}>
+              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text4, marginBottom: GAP.sm }}>附件</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: GAP.xs }}>
+                {v.attachments.map((att, idx) => (
+                  <a key={idx} href={`/api/${att.path}`} target="_blank" rel="noopener noreferrer"
+                    style={{
+                      display: "flex", alignItems: "center", gap: GAP.md,
+                      padding: `${GAP.sm}px ${GAP.base}px`,
+                      background: "rgba(0,0,0,0.02)", borderRadius: GAP.sm,
+                      textDecoration: "none", transition: "background 0.15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.05)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"}
+                  >
+                    <File size={13} color={COLOR.blue} style={{ flexShrink: 0 }} />
+                    <span style={{
+                      flex: 1, fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text2,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {att.originalName || att.path}
+                    </span>
+                    <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub, flexShrink: 0 }}>
+                      {att.size ? (att.size / 1024).toFixed(1) + "KB" : ""}
+                    </span>
+                    <Download size={12} color={COLOR.dim} style={{ flexShrink: 0 }} />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 评分记录 */}
           {v.scores && v.scores.length > 0 && (
             <div>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text4, marginBottom: GAP.sm }}>评分记录</div>
-              {groupScoresByTester(v.scores, activeDims).map((record, idx) => (
+              {groupScoresByTester(v.scores, activeDims).map((record, idx) => {
+                const canEditScore = wo.status !== "done" && (role === "admin" || (role === "tester" && record.tester === user));
+                return (
                 <div key={idx} style={{
                   display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap",
                   padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.03)",
@@ -116,6 +151,27 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
                       </span>
                     ))}
                   </div>
+                  {/* 评分编辑/删除图标 */}
+                  {canEditScore && (
+                    <div style={{ display: "flex", gap: GAP.sm, alignItems: "center", marginLeft: "auto" }}>
+                      <Pencil size={14}
+                        style={{ color: COLOR.dim, cursor: "pointer", transition: "color 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.color = COLOR.text3}
+                        onMouseLeave={e => e.currentTarget.style.color = COLOR.dim}
+                        onClick={() => onEditScore && onEditScore({ planId: wo.id, variantId: v.id, tester: record.tester, scores: record.scoreIds, dims: record.dims })}
+                      />
+                      <Trash2 size={14}
+                        style={{ color: COLOR.dim, cursor: "pointer", transition: "color 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.color = COLOR.error}
+                        onMouseLeave={e => e.currentTarget.style.color = COLOR.dim}
+                        onClick={() => {
+                          if (window.confirm(`确认删除 ${record.tester} 的评分？`)) {
+                            record.scoreIds.forEach(sid => onDeleteScore && onDeleteScore(wo.id, v.id, sid));
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
                   {record.comment && <span style={{ color: COLOR.text5, fontStyle: "italic", width: "100%", paddingLeft: 84 }}>"{record.comment}"</span>}
                   {record.evalDocs && record.evalDocs.length > 0 && (
                     <div style={{ width: "100%", paddingLeft: 84, display: "flex", gap: GAP.sm, flexWrap: "wrap", marginTop: GAP.xs }}>
@@ -138,7 +194,8 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -150,40 +207,64 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
     };
   });
 
-  // 右上角操作按钮 — 按角色+状态决定
+  // 右上角操作按钮 — 按角色+状态决定，支持多按钮
   const actionBtn = (() => {
+    const btns = [];
+
     if (wo.status === "next" && role === "admin") {
-      return (
-        <button onClick={() => onActivate && onActivate(wo)} style={btnAction}>
+      btns.push(
+        <button key="activate" onClick={() => onActivate && onActivate(wo)} style={btnAction}>
           <Play size={13} style={{ marginRight: 4 }} />激活工单
         </button>
       );
     }
+
     if (wo.status === "active") {
-      if (role === "member") return (
-        <button onClick={() => onAddVariant && onAddVariant(wo)} style={btnAction}>
-          <Plus size={13} style={{ marginRight: 4 }} />添加方案
-        </button>
-      );
-      if (role === "tester") return (
-        <button onClick={() => onOpenScorePanel && onOpenScorePanel()} style={btnAction}>
-          <Star size={13} style={{ marginRight: 4 }} />评测打分
-        </button>
-      );
-      if (role === "admin") return (
-        <button onClick={() => onMarkComplete && onMarkComplete(wo)} style={btnAction}>
-          <ClipboardCheck size={13} style={{ marginRight: 4 }} />定稿
-        </button>
-      );
+      // 主按钮
+      if (role === "member") {
+        btns.push(
+          <button key="addVar" onClick={() => onAddVariant && onAddVariant(wo)} style={btnAction}>
+            <Plus size={13} style={{ marginRight: 4 }} />添加方案
+          </button>
+        );
+      }
+      if (role === "tester") {
+        btns.push(
+          <button key="score" onClick={() => onOpenScorePanel && onOpenScorePanel()} style={btnAction}>
+            <Star size={13} style={{ marginRight: 4 }} />评测打分
+          </button>,
+          <button key="addVar" onClick={() => onAddVariant && onAddVariant(wo)} style={btnActionSecondary}>
+            <Plus size={13} style={{ marginRight: 4 }} />添加方案
+          </button>
+        );
+      }
+      if (role === "admin") {
+        btns.push(
+          <button key="complete" onClick={() => onMarkComplete && onMarkComplete(wo)} style={btnAction}>
+            <ClipboardCheck size={13} style={{ marginRight: 4 }} />定稿
+          </button>
+        );
+      }
+
+      // 编辑方案副按钮（active 状态，所有角色可见）
+      if (wo.variants.length > 0) {
+        btns.push(
+          <button key="editVar" onClick={() => onOpenVariantManager && onOpenVariantManager()} style={btnActionSecondary}>
+            <Pencil size={13} style={{ marginRight: 4 }} />编辑方案
+          </button>
+        );
+      }
     }
+
     if (wo.status === "done" && role === "admin") {
-      return (
-        <button onClick={() => onReopen && onReopen(wo)} style={btnActionSecondary}>
+      btns.push(
+        <button key="reopen" onClick={() => onReopen && onReopen(wo)} style={btnActionSecondary}>
           <RotateCcw size={13} style={{ marginRight: 4 }} />撤销定稿
         </button>
       );
     }
-    return null;
+
+    return btns.length > 0 ? <div style={{ display: "flex", gap: GAP.sm, flexWrap: "wrap" }}>{btns}</div> : null;
   })();
 
   const isOverdue = wo.deadline && wo.status !== "done" && new Date(wo.deadline) < new Date();
@@ -303,9 +384,10 @@ function groupScoresByTester(scores, activeDims) {
   const groups = {};
   scores.forEach(s => {
     const key = `${s.tester}-${s.date}`;
-    if (!groups[key]) groups[key] = { tester: s.tester, date: s.date, comment: s.comment || "", evalDocs: [], dims: [] };
+    if (!groups[key]) groups[key] = { tester: s.tester, date: s.date, comment: s.comment || "", evalDocs: [], dims: [], scoreIds: [] };
     const dim = activeDims.find(d => d.id === s.dimId);
     if (dim) groups[key].dims.push({ dimId: s.dimId, dimName: dim.name, value: s.value, max: dim.max });
+    if (s.id) groups[key].scoreIds.push(s.id);
     if (s.comment) groups[key].comment = s.comment;
     if (s.evalDoc && groups[key].evalDocs.length === 0) {
       groups[key].evalDocs = parseEvalDocs(s.evalDoc);

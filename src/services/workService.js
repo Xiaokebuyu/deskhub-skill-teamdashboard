@@ -2,10 +2,16 @@ import { get } from './api.js';
 
 const BASE = '/api';
 
-async function post(path, body, role = 'admin') {
+function buildHeaders(token) {
+  const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
+
+async function post(path, body, token) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Role': role, Accept: 'application/json' },
+    headers: buildHeaders(token),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -15,10 +21,10 @@ async function post(path, body, role = 'admin') {
   return res.json();
 }
 
-async function put(path, body, role = 'admin') {
+async function put(path, body, token) {
   const res = await fetch(path, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-Role': role, Accept: 'application/json' },
+    headers: buildHeaders(token),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -28,10 +34,10 @@ async function put(path, body, role = 'admin') {
   return res.json();
 }
 
-async function patch(path, body, role = 'admin') {
+async function patch(path, body, token) {
   const res = await fetch(path, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'X-Role': role, Accept: 'application/json' },
+    headers: buildHeaders(token),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -41,11 +47,10 @@ async function patch(path, body, role = 'admin') {
   return res.json();
 }
 
-async function del(path, role = 'admin') {
-  const res = await fetch(path, {
-    method: 'DELETE',
-    headers: { 'X-Role': role, Accept: 'application/json' },
-  });
+async function del(path, token) {
+  const h = { Accept: 'application/json' };
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { method: 'DELETE', headers: h });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `API ${res.status}`);
@@ -55,66 +60,110 @@ async function del(path, role = 'admin') {
 
 // --- Plans ---
 
-export async function fetchPlans(query = {}) {
-  const qs = new URLSearchParams(query).toString();
-  const res = await get(`${BASE}/plans${qs ? '?' + qs : ''}`);
+export async function fetchPlans(token) {
+  const res = await get(`${BASE}/plans`, token);
   return res.data;
 }
 
-export async function createPlan(data, role) {
-  const res = await post(`${BASE}/plans`, data, role);
+export async function createPlan(data, token) {
+  const res = await post(`${BASE}/plans`, data, token);
   return res.data;
 }
 
-export async function editPlan(id, data, role) {
-  return put(`${BASE}/plans/${id}`, data, role);
+export async function editPlan(id, data, token) {
+  return put(`${BASE}/plans/${id}`, data, token);
 }
 
-export async function updatePlanStatus(id, body, role) {
-  return patch(`${BASE}/plans/${id}/status`, body, role);
+export async function updatePlanStatus(id, body, token) {
+  return patch(`${BASE}/plans/${id}/status`, body, token);
 }
 
-export async function deletePlan(id, role) {
-  return del(`${BASE}/plans/${id}`, role);
+export async function deletePlan(id, token) {
+  return del(`${BASE}/plans/${id}`, token);
 }
 
 // --- Variants ---
 
-export async function createVariant(planId, data, role) {
-  const res = await post(`${BASE}/plans/${planId}/variants`, data, role);
+export async function createVariant(planId, data, token) {
+  const res = await post(`${BASE}/plans/${planId}/variants`, data, token);
   return res.data;
 }
 
-export async function editVariant(id, data, role) {
-  return put(`${BASE}/variants/${id}`, data, role);
+export async function editVariant(id, data, token) {
+  return put(`${BASE}/variants/${id}`, data, token);
 }
 
-export async function deleteVariant(id, role) {
-  return del(`${BASE}/variants/${id}`, role);
+export async function deleteVariant(id, token) {
+  return del(`${BASE}/variants/${id}`, token);
 }
 
 // --- Scores ---
 
-export async function submitScores(variantId, body, role) {
-  return post(`${BASE}/variants/${variantId}/scores`, body, role);
+export async function submitScores(variantId, body, token) {
+  const res = await post(`${BASE}/variants/${variantId}/scores`, body, token);
+  return res.data;
+}
+
+export async function editScore(id, data, token) {
+  return put(`${BASE}/scores/${id}`, data, token);
+}
+
+export async function deleteScore(id, token) {
+  return del(`${BASE}/scores/${id}`, token);
 }
 
 // --- Dimensions ---
 
-export async function fetchDimensions() {
-  const res = await get(`${BASE}/dimensions`);
+export async function fetchDimensions(token) {
+  const res = await get(`${BASE}/dimensions`, token);
   return res.data;
 }
 
-export async function createDimension(data, role) {
-  const res = await post(`${BASE}/dimensions`, data, role);
+export async function createDimension(data, token) {
+  const res = await post(`${BASE}/dimensions`, data, token);
   return res.data;
 }
 
-export async function editDimension(id, data, role) {
-  return put(`${BASE}/dimensions/${id}`, data, role);
+export async function editDimension(id, data, token) {
+  return put(`${BASE}/dimensions/${id}`, data, token);
 }
 
-export async function deleteDimension(id, role) {
-  return del(`${BASE}/dimensions/${id}`, role);
+export async function deleteDimension(id, token) {
+  return del(`${BASE}/dimensions/${id}`, token);
+}
+
+// --- File Upload ---
+
+export async function uploadFiles(files, token) {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  const h = {};
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/upload`, { method: 'POST', headers: h, body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Upload ${res.status}`);
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+// --- Auth / Users ---
+
+export async function fetchUsers(token) {
+  const res = await get('/api/auth/users', token);
+  return res.data;
+}
+
+export async function createUser(data, token) {
+  const res = await post('/api/auth/users', data, token);
+  return res.data;
+}
+
+export async function deleteUser(id, token) {
+  return del(`/api/auth/users/${id}`, token);
+}
+
+export async function changePassword(data, token) {
+  return put('/api/auth/password', data, token);
 }

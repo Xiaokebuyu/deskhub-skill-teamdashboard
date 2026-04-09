@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -60,6 +61,15 @@ db.exec(`
     sort_order    INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL CHECK(role IN ('admin', 'tester', 'member')) DEFAULT 'member',
+    display_name  TEXT DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // --- Seed 默认维度（仅在表为空时）---
@@ -72,20 +82,37 @@ if (dimCount === 0) {
   console.log('[db] Seeded 3 default dimensions');
 }
 
-// --- 迁移：为旧 DB 补全 plans 表新字段 ---
+// --- Seed 默认管理员（仅在 users 表为空时）---
+const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+if (userCount === 0) {
+  const hash = bcrypt.hashSync('admin123', 10);
+  db.prepare('INSERT INTO users (id, username, password_hash, role, display_name) VALUES (?, ?, ?, ?, ?)')
+    .run('u_admin', 'admin', hash, 'admin', '管理员');
+  console.log('[db] Seeded default admin user (admin / admin123)');
+}
+
+// --- 迁移：为旧 DB 补全新字段 ---
 try {
-  const cols = db.prepare("PRAGMA table_info(plans)").all().map(c => c.name);
-  const migrations = [
+  // plans 表
+  const planCols = db.prepare("PRAGMA table_info(plans)").all().map(c => c.name);
+  const planMigrations = [
     ['owner', "ALTER TABLE plans ADD COLUMN owner TEXT DEFAULT ''"],
     ['deadline', "ALTER TABLE plans ADD COLUMN deadline TEXT DEFAULT ''"],
     ['related_skill', "ALTER TABLE plans ADD COLUMN related_skill TEXT DEFAULT ''"],
     ['attachment', "ALTER TABLE plans ADD COLUMN attachment TEXT DEFAULT ''"],
   ];
-  for (const [col, sql] of migrations) {
-    if (!cols.includes(col)) {
+  for (const [col, sql] of planMigrations) {
+    if (!planCols.includes(col)) {
       db.exec(sql);
       console.log(`[db] Migrated: added column plans.${col}`);
     }
+  }
+
+  // variants 表
+  const varCols = db.prepare("PRAGMA table_info(variants)").all().map(c => c.name);
+  if (!varCols.includes('attachments')) {
+    db.exec("ALTER TABLE variants ADD COLUMN attachments TEXT DEFAULT ''");
+    console.log('[db] Migrated: added column variants.attachments');
   }
 } catch (e) {
   console.warn('[db] Migration warning:', e.message);

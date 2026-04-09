@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Plus, Trash2, FileText } from "lucide-react";
+import { X, Plus, Trash2, FileText, Pencil } from "lucide-react";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import StarRate from "../../components/ui/StarRate.jsx";
 import { FInput } from "../../components/ui/Form.jsx";
@@ -9,15 +9,18 @@ import { td } from "../../utils/helpers.js";
 /**
  * 评测打分面板 — 测试员专用
  * 选方案 → 编写评测文档（Markdown，可多份）→ 打分 → 提交
+ * 支持编辑模式 (editData) + 历史评分管理
  */
-export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) {
+export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, editData, onEditScore, onDeleteScore, role, user }) {
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [tab, setTab] = useState("new"); // "new" | "history"
   const [selVarId, setSelVarId] = useState(null);
   const [scores, setScores] = useState({});
   const [tester, setTester] = useState("");
   const [comment, setComment] = useState("");
   const [evalDocs, setEvalDocs] = useState([]);
+  const [editingScoreIds, setEditingScoreIds] = useState(null); // editing mode: array of score IDs
 
   const activeDims = (dims || []).filter(d => d.active);
 
@@ -25,9 +28,26 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
     if (show) {
       setMounted(true);
       requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
+      // Pre-fill from editData (from WoFullPanel inline edit button)
+      if (editData) {
+        setTab("new");
+        setSelVarId(editData.variantId);
+        setTester(editData.tester || user || "");
+        setEditingScoreIds(editData.scores || null);
+        const preScores = {};
+        (editData.dims || []).forEach(d => { preScores[d.dimId] = d.value; });
+        setScores(preScores);
+      } else {
+        setTab("new");
+        setTester(user || "");
+        setEditingScoreIds(null);
+      }
     } else if (mounted) {
       setVisible(false);
-      const t = setTimeout(() => setMounted(false), 400);
+      const t = setTimeout(() => {
+        setMounted(false);
+        setEditingScoreIds(null);
+      }, 400);
       return () => clearTimeout(t);
     }
   }, [show]);
@@ -65,6 +85,29 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
     setSelVarId(null);
   };
 
+  const handleEditSubmit = () => {
+    if (!allFilled || !editingScoreIds) return;
+    // Update each score by ID
+    editingScoreIds.forEach(sid => {
+      const dimScore = activeDims.find(d => {
+        const existing = wo.variants.find(v => v.id === selVarId)?.scores?.find(s => s.id === sid);
+        return existing && d.id === existing.dimId;
+      });
+      if (!dimScore) return;
+      const existing = wo.variants.find(v => v.id === selVarId)?.scores?.find(s => s.id === sid);
+      if (!existing) return;
+      onEditScore && onEditScore(wo.id, selVarId, sid, {
+        value: scores[existing.dimId] ?? existing.value,
+        comment: comment.trim(),
+      });
+    });
+    setEditingScoreIds(null);
+    setScores({});
+    setComment("");
+    setSelVarId(null);
+    onClose();
+  };
+
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, zIndex: 800,
@@ -82,26 +125,66 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
         transform: visible ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
         transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
       }}>
-        {/* 标题栏 */}
+        {/* 标题栏 + tab 切换 */}
         <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
           flexShrink: 0,
         }}>
-          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>评测打分</div>
-          <div onClick={onClose} style={{
-            width: 28, height: 28, borderRadius: 7,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
-            onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
-          >
-            <X size={14} color={COLOR.text5} strokeWidth={1.5} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.base }}>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
+              {editingScoreIds ? "编辑评分" : "评测打分"}
+            </div>
+            <div onClick={onClose} style={{
+              width: 28, height: 28, borderRadius: 7,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
+              onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
+            >
+              <X size={14} color={COLOR.text5} strokeWidth={1.5} />
+            </div>
           </div>
+          {!editingScoreIds && (
+            <div style={{ display: "flex", gap: GAP.lg }}>
+              {["new", "history"].map(t => (
+                <div key={t} onClick={() => setTab(t)} style={{
+                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, cursor: "pointer",
+                  color: tab === t ? COLOR.text : COLOR.sub,
+                  borderBottom: tab === t ? `2px solid ${COLOR.text}` : "2px solid transparent",
+                  paddingBottom: GAP.xs, transition: "all 0.15s",
+                }}>
+                  {t === "new" ? "新建评分" : "历史评分"}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, overflow: "auto", padding: `${GAP.xl}px ${GAP.xxl}px` }}>
+
+          {/* === 历史评分 tab === */}
+          {tab === "history" && !editingScoreIds && (
+            <HistoryScores wo={wo} dims={activeDims} role={role} user={user}
+              onEdit={(data) => {
+                setSelVarId(data.variantId);
+                setTester(data.tester);
+                setEditingScoreIds(data.scoreIds);
+                const preScores = {};
+                data.dims.forEach(d => { preScores[d.dimId] = d.value; });
+                setScores(preScores);
+                setTab("new");
+              }}
+              onDelete={(planId, variantId, scoreIds) => {
+                if (window.confirm("确认删除此评分？")) {
+                  scoreIds.forEach(sid => onDeleteScore && onDeleteScore(planId, variantId, sid));
+                }
+              }}
+            />
+          )}
+
+          {/* === 新建/编辑评分 tab === */}
+          {tab === "new" && <>
           {/* 方案选择 */}
           <div style={{ marginBottom: GAP.xl }}>
             <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, color: COLOR.text3, marginBottom: GAP.md }}>选择方案</div>
@@ -139,7 +222,10 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
 
           {/* 测试人 + 评语 */}
           <div style={{ marginBottom: GAP.md }}>
-            <FInput label="测试人" value={tester} onChange={e => setTester(e.target.value)} placeholder="你的名字" />
+            <div style={{ marginBottom: GAP.lg }}>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>测试人</div>
+              <div style={{ padding: `${GAP.md}px ${GAP.base}px`, background: "rgba(0,0,0,0.03)", borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text }}>{user || tester}</div>
+            </div>
           </div>
           <div style={{ marginBottom: GAP.xl }}>
             <FInput label="评语" value={comment} onChange={e => setComment(e.target.value)} placeholder="选填" multiline />
@@ -192,7 +278,7 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
               </div>
             ))}
 
-            {evalDocs.length === 0 && (
+            {evalDocs.length === 0 && !editingScoreIds && (
               <div
                 onClick={addDoc}
                 style={{
@@ -209,11 +295,13 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
               </div>
             )}
           </div>
+          </>}
         </div>
 
-        {/* 提交按钮 */}
+        {/* 提交/保存按钮 */}
+        {tab === "new" && (
         <div style={{ padding: `0 ${GAP.xxl}px ${GAP.xl}px`, flexShrink: 0 }}>
-          <button onClick={handleSubmit} style={{
+          <button onClick={editingScoreIds ? handleEditSubmit : handleSubmit} style={{
             width: "100%", padding: `${GAP.base}px`, borderRadius: GAP.md,
             cursor: allFilled ? "pointer" : "not-allowed",
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 500,
@@ -222,9 +310,84 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores }) 
             border: allFilled ? `1px solid ${COLOR.btn}` : `1px solid ${COLOR.borderMd}`,
             opacity: allFilled ? 1 : 0.6,
             transition: "all 0.15s",
-          }}>提交评测</button>
+          }}>{editingScoreIds ? "保存修改" : "提交评测"}</button>
         </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** 历史评分列表子组件 */
+function HistoryScores({ wo, dims, role, user, onEdit, onDelete }) {
+  if (!wo) return null;
+
+  // Collect all score groups across variants
+  const allGroups = [];
+  wo.variants.forEach(v => {
+    if (!v.scores || v.scores.length === 0) return;
+    const groups = {};
+    v.scores.forEach(s => {
+      const key = `${s.tester}-${s.date}`;
+      if (!groups[key]) groups[key] = { tester: s.tester, date: s.date, variantName: v.name, variantId: v.id, scoreIds: [], dims: [] };
+      groups[key].scoreIds.push(s.id);
+      const dim = dims.find(d => d.id === s.dimId);
+      if (dim) groups[key].dims.push({ dimId: s.dimId, dimName: dim.name, value: s.value, max: dim.max });
+    });
+    Object.values(groups).forEach(g => allGroups.push(g));
+  });
+
+  // Filter: tester sees own, admin sees all
+  const visible = role === "admin" ? allGroups : allGroups.filter(g => g.tester === user);
+  const isDone = wo.status === "done";
+
+  if (visible.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: GAP.xxl, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.sub }}>
+        {role === "admin" ? "暂无评分记录" : "暂无你的评分记录"}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {visible.map((g, idx) => (
+        <div key={idx} style={{
+          padding: `${GAP.base}px ${GAP.lg}px`, marginBottom: GAP.sm,
+          borderRadius: GAP.md, border: `1px solid ${COLOR.borderLt}`,
+          background: "rgba(0,0,0,0.015)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.sm }}>
+            <div>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, fontWeight: 500 }}>{g.variantName}</span>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginLeft: GAP.md }}>{g.tester} · {g.date}</span>
+            </div>
+            {!isDone && (
+              <div style={{ display: "flex", gap: GAP.md }}>
+                <Pencil size={14}
+                  style={{ color: COLOR.dim, cursor: "pointer", transition: "color 0.15s" }}
+                  onMouseEnter={e => e.currentTarget.style.color = COLOR.text3}
+                  onMouseLeave={e => e.currentTarget.style.color = COLOR.dim}
+                  onClick={() => onEdit({ variantId: g.variantId, tester: g.tester, scoreIds: g.scoreIds, dims: g.dims })}
+                />
+                <Trash2 size={14}
+                  style={{ color: COLOR.dim, cursor: "pointer", transition: "color 0.15s" }}
+                  onMouseEnter={e => e.currentTarget.style.color = COLOR.error}
+                  onMouseLeave={e => e.currentTarget.style.color = COLOR.dim}
+                  onClick={() => onDelete(wo.id, g.variantId, g.scoreIds)}
+                />
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: GAP.lg, flexWrap: "wrap" }}>
+            {g.dims.map(d => (
+              <span key={d.dimId} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text3 }}>
+                {d.dimName} <strong>{d.value}</strong>/{d.max || 10}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
