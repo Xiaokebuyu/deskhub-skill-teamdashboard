@@ -1,7 +1,14 @@
 node_modules/
 dist/
 .claude/
+.DS_Store
+*.zip
+
+server/node_modules/
 server/db/*.db
 server/db/*.db-shm
 server/db/*.db-wal
 server/uploads/
+
+mcp-server/
+mcp-server 2/
