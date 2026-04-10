@@ -1,3 +1,5 @@
+import './env.js'; // .env 必须在所有其他 import 之前加载
+
 import express from 'express';
 import cors from 'cors';
 import deskhubProxy from './routes/proxy.js';
@@ -13,18 +15,10 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { provider, handleLogin, ensureClientMiddleware } from './mcp/oauth-provider.js';
 
-// 读 .env（简易方式，不引入 dotenv）
-import { readFileSync, existsSync } from 'fs';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
-try {
-  const envContent = readFileSync(join(__dirname, '.env'), 'utf-8');
-  for (const line of envContent.split('\n')) {
-    const match = line.match(/^([^#=]+)=(.*)$/);
-    if (match) process.env[match[1].trim()] = match[2].trim();
-  }
-} catch { /* .env 不存在也没关系 */ }
 
 const app = express();
 const PORT = process.env.PORT || 3001;
