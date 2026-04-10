@@ -152,6 +152,7 @@ export async function executeTool(name, input = {}) {
 
     case 'send_notification': {
       const { target_username, message } = input;
+      console.log(`[Bot/Tool] send_notification 被调用: target=${target_username}, message=${message?.slice(0, 80)}`);
       if (!target_username || !message) {
         return { sent: false, reason: 'target_username 和 message 必填' };
       }
