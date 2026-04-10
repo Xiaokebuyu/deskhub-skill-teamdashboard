@@ -10,6 +10,20 @@ import db from '../db/init.js';
 
 const uid = () => crypto.randomUUID().slice(0, 8);
 
+// ============================================================
+//  变更日志（飞书推送用）
+// ============================================================
+
+export function logChange(entityType, entityId, action, summary, actor = '', priority = 'medium', relatedUsers = []) {
+  db.prepare(
+    'INSERT INTO change_log (entity_type, entity_id, action, summary, actor, priority, related_users) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(entityType, entityId, action, summary, actor, priority, JSON.stringify(relatedUsers));
+}
+
+export function getRecentChanges(limit = 20) {
+  return db.prepare('SELECT * FROM change_log ORDER BY created_at DESC LIMIT ?').all(limit);
+}
+
 /** ISO datetime → "MM-DD" */
 function fmtDate(iso) {
   if (!iso) return '';
@@ -34,6 +48,7 @@ export function createPlan({ name, type, priority = 'medium', desc = '', status 
   db.prepare(`INSERT INTO plans (id, name, type, status, priority, description, owner, deadline, related_skill, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, name, type, status, priority, desc, owner, deadline, related_skill, attachment);
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
+  logChange('plan', id, 'created', `创建工单「${name}」`, owner, priority, owner ? [owner] : []);
   return {
     id: plan.id, name: plan.name, type: plan.type, status: plan.status,
     priority: plan.priority, created: fmtDate(plan.created_at),
@@ -54,15 +69,19 @@ export function editPlan(planId, fields) {
   if (sets.length === 0) throw new Error('无更新字段');
   sets.push("updated_at = datetime('now')");
   db.prepare(`UPDATE plans SET ${sets.join(', ')} WHERE id = ?`).run(...vals, planId);
+  const plan = db.prepare('SELECT name, priority, owner FROM plans WHERE id = ?').get(planId);
+  if (plan) logChange('plan', planId, 'updated', `编辑工单「${plan.name}」`, '', plan.priority, plan.owner ? [plan.owner] : []);
 }
 
 export function deletePlan(planId) {
+  const plan = db.prepare('SELECT name, priority, owner FROM plans WHERE id = ?').get(planId);
   const vids = db.prepare('SELECT id FROM variants WHERE plan_id = ?').all(planId).map(v => v.id);
   if (vids.length > 0) {
     db.prepare(`DELETE FROM scores WHERE variant_id IN (${vids.map(() => '?').join(',')})`).run(...vids);
   }
   db.prepare('DELETE FROM variants WHERE plan_id = ?').run(planId);
   db.prepare('DELETE FROM plans WHERE id = ?').run(planId);
+  if (plan) logChange('plan', planId, 'deleted', `删除工单「${plan.name}」`, '', plan.priority, plan.owner ? [plan.owner] : []);
 }
 
 export function updatePlanStatus(planId, status, result) {
@@ -81,6 +100,12 @@ export function updatePlanStatus(planId, status, result) {
 
   db.prepare(`UPDATE plans SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(status, status === 'done' ? result : null, planId);
+
+  const statusLabel = { next: '待开始', active: '进行中', done: '已完成' }[status] || status;
+  const resultLabel = result === 'adopted' ? '（采纳）' : result === 'shelved' ? '（搁置）' : '';
+  const uploaders = db.prepare('SELECT DISTINCT uploader FROM variants WHERE plan_id = ?').all(planId).map(v => v.uploader);
+  const related = [plan.owner, ...uploaders].filter(Boolean);
+  logChange('plan', planId, 'status_changed', `工单「${plan.name}」→ ${statusLabel}${resultLabel}`, '', plan.priority, related);
 }
 
 // ============================================================
@@ -99,6 +124,7 @@ export function addVariant(planId, { name, uploader, desc = '', link = '', conte
     .run(id, planId, name, uploader, desc, link, content, attStr);
 
   const v = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
+  logChange('variant', id, 'created', `工单「${plan.name}」新增方案「${name}」`, uploader, plan.priority, plan.owner ? [plan.owner] : []);
   return {
     id: v.id, name: v.name, uploader: v.uploader,
     uploaded: fmtDate(v.uploaded_at), desc: v.description,
@@ -133,11 +159,12 @@ export function editVariant(variantId, fields) {
 export function deleteVariant(variantId) {
   const variant = db.prepare('SELECT * FROM variants WHERE id = ?').get(variantId);
   if (!variant) throw new Error('方案不存在');
-  const plan = db.prepare('SELECT status FROM plans WHERE id = ?').get(variant.plan_id);
+  const plan = db.prepare('SELECT status, name, priority, owner FROM plans WHERE id = ?').get(variant.plan_id);
   if (plan && plan.status === 'done') throw new Error('工单已定稿，无法删除方案');
 
   db.prepare('DELETE FROM scores WHERE variant_id = ?').run(variantId);
   db.prepare('DELETE FROM variants WHERE id = ?').run(variantId);
+  if (plan) logChange('variant', variantId, 'deleted', `工单「${plan.name}」删除方案「${variant.name}」`, '', plan.priority, plan.owner ? [plan.owner] : []);
 }
 
 // ============================================================
@@ -175,6 +202,11 @@ export function submitScores(variantId, { tester, scores, evalDoc }) {
     }
   });
   insertMany(scores);
+
+  const planRow = db.prepare('SELECT name, priority, owner FROM plans WHERE id = ?').get(variant.plan_id);
+  const related = [planRow?.owner, variant.uploader].filter(Boolean);
+  logChange('score', variantId, 'created', `${tester} 对方案「${variant.name}」提交了评分`, tester, planRow?.priority || 'medium', related);
+
   return created;
 }
 
@@ -298,8 +330,8 @@ export function getScoreOwner(scoreId) {
 export function listPlans({ type, status } = {}) {
   let where = [];
   let params = {};
-  if (type) { where.push('p.type = $type'); params.$type = type; }
-  if (status) { where.push('p.status = $status'); params.$status = status; }
+  if (type) { where.push('p.type = $type'); params.type = type; }
+  if (status) { where.push('p.status = $status'); params.status = status; }
   const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
   const plans = db.prepare(`SELECT * FROM plans p ${clause} ORDER BY p.created_at DESC`).all(params);

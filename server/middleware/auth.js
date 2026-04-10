@@ -1,5 +1,9 @@
 import jwt from 'jsonwebtoken';
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('[FATAL] JWT_SECRET 未设置，生产环境不允许使用默认密钥。请在 .env 中配置 JWT_SECRET');
+  process.exit(1);
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'deskhub-teamboard-secret';
 
 /**

@@ -2,7 +2,11 @@
  * DeskSkill MCP OAuth 2.0 Provider
  *
  * 实现 @modelcontextprotocol/sdk 的 OAuthServerProvider 接口
- * 用 SQLite users 表验证登录，内存存储 codes/tokens/clients
+ *
+ * 持久化策略（优雅的选择）：
+ * - Token → JWT（无状态，靠签名验证，重启后自动有效）
+ * - Clients → SQLite（注册过的客户端持久化）
+ * - Codes / PendingAuths → 内存（一次性、短命，丢了重新认证）
  */
 
 import { randomUUID } from 'crypto';
@@ -13,21 +17,60 @@ import { JWT_SECRET } from '../middleware/auth.js';
 import { renderLoginPage } from './login-page.js';
 
 // ============================================================
-//  Clients Store（动态客户端注册）
+//  Clients Store（SQLite 持久化）
 // ============================================================
 
-class ClientsStore {
-  constructor() {
-    this.clients = new Map();
-  }
+// 建表（幂等）
+db.exec(`
+  CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id              TEXT PRIMARY KEY,
+    client_name            TEXT DEFAULT 'auto',
+    redirect_uris          TEXT DEFAULT '[]',
+    token_endpoint_auth_method TEXT DEFAULT 'none',
+    created_at             TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
 
+class ClientsStore {
   async getClient(clientId) {
-    return this.clients.get(clientId) || undefined;
+    const row = db.prepare('SELECT * FROM oauth_clients WHERE client_id = ?').get(clientId);
+    if (!row) return undefined;
+    return {
+      client_id: row.client_id,
+      client_name: row.client_name,
+      redirect_uris: JSON.parse(row.redirect_uris || '[]'),
+      token_endpoint_auth_method: row.token_endpoint_auth_method,
+    };
   }
 
   async registerClient(clientMetadata) {
-    this.clients.set(clientMetadata.client_id, clientMetadata);
+    const existing = db.prepare('SELECT client_id FROM oauth_clients WHERE client_id = ?').get(clientMetadata.client_id);
+    if (existing) {
+      // 更新 redirect_uris
+      db.prepare('UPDATE oauth_clients SET redirect_uris = ?, client_name = ? WHERE client_id = ?')
+        .run(JSON.stringify(clientMetadata.redirect_uris || []), clientMetadata.client_name || 'auto', clientMetadata.client_id);
+    } else {
+      db.prepare('INSERT INTO oauth_clients (client_id, client_name, redirect_uris, token_endpoint_auth_method) VALUES (?, ?, ?, ?)')
+        .run(
+          clientMetadata.client_id,
+          clientMetadata.client_name || 'auto',
+          JSON.stringify(clientMetadata.redirect_uris || []),
+          clientMetadata.token_endpoint_auth_method || 'none',
+        );
+    }
     return clientMetadata;
+  }
+
+  /** 确保 redirect_uri 在客户端白名单里 */
+  addRedirectUri(clientId, redirectUri) {
+    const row = db.prepare('SELECT redirect_uris FROM oauth_clients WHERE client_id = ?').get(clientId);
+    if (!row) return;
+    const uris = JSON.parse(row.redirect_uris || '[]');
+    if (!uris.includes(redirectUri)) {
+      uris.push(redirectUri);
+      db.prepare('UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = ?')
+        .run(JSON.stringify(uris), clientId);
+    }
   }
 }
 
@@ -38,17 +81,15 @@ class ClientsStore {
 class DeskSkillOAuthProvider {
   constructor() {
     this.clientsStore = new ClientsStore();
-    this.codes = new Map();      // code → { client, params, userId, role, username }
-    this.tokens = new Map();     // token → { userId, role, username, clientId, scopes, expiresAt, resource }
-    this.pendingAuths = new Map(); // requestId → { client, params }
+    this.codes = new Map();          // 内存：code → { client, params, userId, role, username }
+    this.pendingAuths = new Map();   // 内存：requestId → { client, params }
 
-    // 每 10 分钟清理过期 codes 和 tokens
+    // 每 10 分钟清理过期 codes
     setInterval(() => this._cleanup(), 10 * 60 * 1000);
   }
 
   /**
    * authorize — 渲染登录页
-   * SDK 的 /authorize 端点调用此方法，传入已验证的 client 和 OAuth 参数
    */
   async authorize(client, params, res) {
     const session = this._getSessionFromCookie(res.req);
@@ -57,11 +98,8 @@ class DeskSkillOAuthProvider {
       if (user) {
         const code = randomUUID();
         this.codes.set(code, {
-          client,
-          params,
-          userId: user.id,
-          role: user.role,
-          username: user.username,
+          client, params,
+          userId: user.id, role: user.role, username: user.username,
           createdAt: Date.now(),
         });
 
@@ -82,46 +120,33 @@ class DeskSkillOAuthProvider {
 
   /**
    * 处理登录表单提交（POST /oauth/login）
-   * 非 Provider 接口方法，由 Express 路由直接调用
    */
   async handleLogin(req, res) {
     const { request_id, username, password } = req.body;
 
-    // 1. 查找 pending auth request
     const pending = this.pendingAuths.get(request_id);
     if (!pending) {
       return res.type('html').send(renderLoginPage(request_id, '授权请求已过期，请重新连接'));
     }
 
-    // 2. 验证用户
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       return res.type('html').send(renderLoginPage(request_id, '用户名或密码错误'));
     }
 
-    // 3. 生成 authorization code
     const code = randomUUID();
     this.codes.set(code, {
-      client: pending.client,
-      params: pending.params,
-      userId: user.id,
-      role: user.role,
-      username: user.username,
+      client: pending.client, params: pending.params,
+      userId: user.id, role: user.role, username: user.username,
       createdAt: Date.now(),
     });
 
-    // 4. 清理 pending
     this.pendingAuths.delete(request_id);
-
-    // 5. 设置 session cookie，下次 OAuth 自动通过
     this._setSessionCookie(res, user);
 
-    // 6. 重定向回客户端（带 code 和 state）
     const targetUrl = new URL(pending.params.redirectUri);
     targetUrl.searchParams.set('code', code);
-    if (pending.params.state) {
-      targetUrl.searchParams.set('state', pending.params.state);
-    }
+    if (pending.params.state) targetUrl.searchParams.set('state', pending.params.state);
 
     res.redirect(targetUrl.toString());
   }
@@ -136,64 +161,62 @@ class DeskSkillOAuthProvider {
   }
 
   /**
-   * exchangeAuthorizationCode — 用 code 换 token
+   * exchangeAuthorizationCode — 用 code 换 JWT token
    */
-  async exchangeAuthorizationCode(client, authorizationCode, _codeVerifier, _redirectUri, _resource) {
+  async exchangeAuthorizationCode(client, authorizationCode) {
     const codeData = this.codes.get(authorizationCode);
     if (!codeData) throw new Error('Invalid authorization code');
 
-    // 验证 code 是发给这个 client 的
     if (codeData.client.client_id !== client.client_id) {
       throw new Error('Authorization code was not issued to this client');
     }
-
-    // Code 10 分钟过期
     if (Date.now() - codeData.createdAt > 10 * 60 * 1000) {
       this.codes.delete(authorizationCode);
       throw new Error('Authorization code expired');
     }
 
-    // 消费 code（一次性）
     this.codes.delete(authorizationCode);
 
-    // 生成 access token
-    const token = randomUUID();
-    const expiresIn = 3600; // 1 小时
-    this.tokens.set(token, {
+    const tokenPayload = {
       userId: codeData.userId,
       role: codeData.role,
       username: codeData.username,
       clientId: client.client_id,
       scopes: codeData.params.scopes || [],
-      expiresAt: Date.now() + expiresIn * 1000,
-      resource: codeData.params.resource,
-      type: 'access',
-    });
-
-    const roleMap = { admin: '管理员', tester: '测试员', member: '成员' };
-    console.log(`[mcp/oauth] Token issued: ${codeData.username} (${roleMap[codeData.role] || codeData.role})`);
-
-    return {
-      access_token: token,
-      token_type: 'bearer',
-      expires_in: expiresIn,
-      scope: (codeData.params.scopes || []).join(' '),
     };
+
+    return this._issueTokenPair(tokenPayload, codeData.params.scopes);
   }
 
   /**
-   * exchangeRefreshToken — 暂不实现
+   * exchangeRefreshToken — 用 refresh token 换新的 access + refresh token
    */
-  async exchangeRefreshToken(_client, _refreshToken, _scopes, _resource) {
-    throw new Error('Refresh token 暂不支持，请重新登录');
+  async exchangeRefreshToken(client, refreshToken) {
+    let payload;
+    try {
+      payload = jwt.verify(refreshToken, JWT_SECRET);
+    } catch (err) {
+      throw new Error(err.name === 'TokenExpiredError' ? 'Refresh token expired' : 'Invalid refresh token');
+    }
+
+    if (payload.type !== 'mcp_refresh') {
+      throw new Error('Invalid token type');
+    }
+
+    return this._issueTokenPair({
+      userId: payload.userId,
+      role: payload.role,
+      username: payload.username,
+      clientId: payload.clientId,
+      scopes: payload.scopes || [],
+    }, payload.scopes);
   }
 
   /**
-   * verifyAccessToken — 验证 token，返回 AuthInfo
-   * 同时兼容 MCP_API_TOKEN 静态令牌
+   * verifyAccessToken — JWT 验证（无状态，不查 Map）
    */
   async verifyAccessToken(token) {
-    // 1. 检查 MCP_API_TOKEN（静态 admin token）
+    // 1. 静态 admin token
     const apiToken = process.env.MCP_API_TOKEN;
     if (apiToken && token === apiToken) {
       return {
@@ -204,27 +227,58 @@ class DeskSkillOAuthProvider {
       };
     }
 
-    // 2. 检查 OAuth token
-    const tokenData = this.tokens.get(token);
-    if (!tokenData) {
-      throw new Error('Invalid token');
+    // 2. JWT 验证
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      throw new Error(err.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token');
     }
-    if (tokenData.expiresAt < Date.now()) {
-      this.tokens.delete(token);
-      throw new Error('Token expired');
+
+    if (payload.type !== 'mcp_access') {
+      throw new Error('Invalid token type');
     }
 
     return {
       token,
-      clientId: tokenData.clientId,
-      scopes: tokenData.scopes,
-      expiresAt: Math.floor(tokenData.expiresAt / 1000),
-      resource: tokenData.resource,
+      clientId: payload.clientId,
+      scopes: payload.scopes || [],
+      expiresAt: payload.exp,
       extra: {
-        role: tokenData.role,
-        username: tokenData.username,
-        userId: tokenData.userId,
+        role: payload.role,
+        username: payload.username,
+        userId: payload.userId,
       },
+    };
+  }
+
+  /**
+   * 生成 access + refresh token 对
+   * access: 1 小时，用于 API 调用
+   * refresh: 7 天，用于无感续期
+   */
+  _issueTokenPair(payload, scopes) {
+    const accessToken = jwt.sign(
+      { ...payload, type: 'mcp_access' },
+      JWT_SECRET,
+      { expiresIn: 3600 },
+    );
+
+    const refreshToken = jwt.sign(
+      { ...payload, type: 'mcp_refresh' },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+
+    const roleMap = { admin: '管理员', tester: '测试员', member: '成员' };
+    console.log(`[mcp/oauth] Token issued: ${payload.username} (${roleMap[payload.role] || payload.role})`);
+
+    return {
+      access_token: accessToken,
+      token_type: 'bearer',
+      expires_in: 3600,
+      scope: (scopes || []).join(' '),
+      refresh_token: refreshToken,
     };
   }
 
@@ -254,18 +308,11 @@ class DeskSkillOAuthProvider {
     });
   }
 
-  /** 清理过期数据 */
   _cleanup() {
     const now = Date.now();
-    // Codes: 10 分钟
     for (const [code, data] of this.codes) {
       if (now - data.createdAt > 10 * 60 * 1000) this.codes.delete(code);
     }
-    // Tokens: 按 expiresAt
-    for (const [token, data] of this.tokens) {
-      if (data.expiresAt < now) this.tokens.delete(token);
-    }
-    // Pending auths: 10 分钟
     for (const [id, data] of this.pendingAuths) {
       if (now - data.createdAt > 10 * 60 * 1000) this.pendingAuths.delete(id);
     }
@@ -276,33 +323,30 @@ class DeskSkillOAuthProvider {
 export const provider = new DeskSkillOAuthProvider();
 
 /**
- * Express 中间件：在 /authorize 之前预注册 client + redirect_uri
- * 解决客户端（Cursor 等）跳过 /register 直接带 client_id 的问题
+ * 中间件：/authorize 前自动注册 client + redirect_uri
  */
 export function ensureClientMiddleware(req, res, next) {
   if (req.path === '/authorize' && req.query.client_id && req.query.redirect_uri) {
     const { client_id, redirect_uri } = req.query;
     const store = provider.clientsStore;
-    let client = store.clients.get(client_id);
-    if (!client) {
-      client = {
+
+    // 同步查（SQLite 是同步的）
+    const existing = db.prepare('SELECT client_id FROM oauth_clients WHERE client_id = ?').get(client_id);
+    if (!existing) {
+      store.registerClient({
         client_id,
         client_name: 'auto',
-        redirect_uris: [],
+        redirect_uris: [redirect_uri],
         token_endpoint_auth_method: 'none',
-      };
-      store.clients.set(client_id, client);
+      });
       console.log(`[mcp/oauth] Auto-registered client: ${client_id.slice(0, 8)}...`);
-    }
-    // 确保 redirect_uri 在白名单中
-    if (!client.redirect_uris.includes(redirect_uri)) {
-      client.redirect_uris.push(redirect_uri);
+    } else {
+      store.addRedirectUri(client_id, redirect_uri);
     }
   }
   next();
 }
 
-// Express 路由处理器（POST /oauth/login）
 export function handleLogin(req, res) {
   return provider.handleLogin(req, res);
 }

@@ -29,7 +29,8 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors(corsOrigin ? { origin: corsOrigin.split(',').map(s => s.trim()) } : undefined));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));  // OAuth 登录表单
 
@@ -73,8 +74,12 @@ if (process.env.NODE_ENV === 'production' && existsSync(distPath)) {
   });
 }
 
+// --- 飞书 LLM 机器人 ---
+import { startBot } from './bot/index.js';
+
 app.listen(PORT, () => {
   console.log(`[server] DeskSkill API running on http://localhost:${PORT}`);
   console.log(`[server] MCP endpoint: http://localhost:${PORT}${MCP_PATH}`);
   console.log(`[server] OAuth issuer: ${issuerUrl.href}`);
+  startBot().catch(err => console.error('[Bot] 启动失败:', err));
 });

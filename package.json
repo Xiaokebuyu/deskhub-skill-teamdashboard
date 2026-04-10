@@ -9,6 +9,7 @@
     "deploy": "wrangler pages deploy dist"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.60.0",
     "lucide-react": "^0.487.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

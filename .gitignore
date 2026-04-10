@@ -5,6 +5,7 @@ dist/
 *.zip
 
 server/node_modules/
+server/.env
 server/db/*.db
 server/db/*.db-shm
 server/db/*.db-wal

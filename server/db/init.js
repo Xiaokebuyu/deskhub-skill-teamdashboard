@@ -85,10 +85,20 @@ if (dimCount === 0) {
 // --- Seed 默认管理员（仅在 users 表为空时）---
 const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
 if (userCount === 0) {
-  const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users (id, username, password_hash, role, display_name) VALUES (?, ?, ?, ?, ?)')
-    .run('u_admin', 'admin', hash, 'admin', '管理员');
-  console.log('[db] Seeded default admin user (admin / admin123)');
+  if (process.env.NODE_ENV === 'production') {
+    const crypto = await import('crypto');
+    const tempPwd = crypto.randomBytes(12).toString('base64url');
+    const hash = bcrypt.hashSync(tempPwd, 10);
+    db.prepare('INSERT INTO users (id, username, password_hash, role, display_name) VALUES (?, ?, ?, ?, ?)')
+      .run('u_admin', 'admin', hash, 'admin', '管理员');
+    console.log(`[db] 生产环境：已创建管理员账号 admin，临时密码: ${tempPwd}`);
+    console.log('[db] ⚠ 请登录后立即修改密码！');
+  } else {
+    const hash = bcrypt.hashSync('admin123', 10);
+    db.prepare('INSERT INTO users (id, username, password_hash, role, display_name) VALUES (?, ?, ?, ?, ?)')
+      .run('u_admin', 'admin', hash, 'admin', '管理员');
+    console.log('[db] Seeded default admin user (admin / admin123)');
+  }
 }
 
 // --- 迁移：为旧 DB 补全新字段 ---
@@ -116,6 +126,33 @@ try {
   }
 } catch (e) {
   console.warn('[db] Migration warning:', e.message);
+}
+
+// --- 变更日志表（飞书机器人推送用）---
+db.exec(`
+  CREATE TABLE IF NOT EXISTS change_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type   TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    summary       TEXT DEFAULT '',
+    actor         TEXT DEFAULT '',
+    priority      TEXT DEFAULT 'medium',
+    related_users TEXT DEFAULT '[]',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    notified      INTEGER NOT NULL DEFAULT 0
+  );
+`);
+
+// --- 迁移：users 表加 feishu_open_id ---
+try {
+  const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!userCols.includes('feishu_open_id')) {
+    db.exec("ALTER TABLE users ADD COLUMN feishu_open_id TEXT DEFAULT ''");
+    console.log('[db] Migrated: added column users.feishu_open_id');
+  }
+} catch (e) {
+  console.warn('[db] feishu_open_id migration warning:', e.message);
 }
 
 console.log(`[db] SQLite ready at ${DB_PATH}`);
