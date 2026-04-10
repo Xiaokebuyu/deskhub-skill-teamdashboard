@@ -135,9 +135,9 @@ async function handleMessage(text, chatId, userId, chatType) {
     };
 
     try {
-      const history = getSession(userId);
-      const { text: reply, newMessages } = await chat(text, history, onProgress, boundUser);
-      updateSession(userId, newMessages);
+      const { messages, toolLog } = getSession(userId);
+      const { text: reply, toolSummaries } = await chat(text, messages, onProgress, boundUser, toolLog);
+      updateSession(userId, text, reply, toolSummaries);
     } catch (err) {
       console.error('[Bot] 消息处理错误:', err);
       const card = buildErrorCard('抱歉，我暂时无法处理请求，请稍后再试。');

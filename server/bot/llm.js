@@ -10,7 +10,7 @@ const MAX_TOOL_ROUNDS = 8;
 const REQUEST_TIMEOUT = 30000;
 const MAX_TOKENS = 8192;  // 给复杂回复（周报、多工单对比）留足空间
 
-function buildSystemPrompt(boundUser = null) {
+function buildSystemPrompt(boundUser = null, toolLog = []) {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const nowMs = now.getTime();
@@ -75,6 +75,10 @@ Umami 时间参数是毫秒时间戳，帮用户转换自然语言时间。
 ## 交互节奏
 需要调用工具时，先说一句简短自然的话，然后调工具。不要机械地说"正在查询"。不需要工具的问题（打招呼、闲聊）直接回答。`
 
+  + (toolLog.length > 0
+    ? `\n\n## 本次会话的工具调用记录\n${toolLog.map(l => `- ${l}`).join('\n')}\n\n这些是你在之前轮次中调用过的工具，结果已反映在你的历史回复中。`
+    : '')
+
   + (boundUser
     ? `\n\n## 当前对话用户\n用户名：${boundUser.username}\n显示名：${boundUser.display_name || boundUser.username}\n角色：${{ admin: '管理员', tester: '测试员', member: '成员' }[boundUser.role] || boundUser.role}\n\n你知道在和谁说话。回复时可以自然地称呼对方。通知别人时排除这个人自己。`
     : `\n\n## 当前对话用户\n未绑定飞书账号的用户。你可以正常聊天，但不要查询平台数据或发送通知。如果对方想使用平台功能，友好地提醒：私聊发送「绑定 用户名 密码」来关联账号。`);
@@ -98,44 +102,44 @@ const ERROR_MESSAGE = '抱歉，我暂时无法处理请求，请稍后再试。
  * @param {Array} history - 会话历史 messages 数组
  * @param {Function} [onProgress] - 进度回调: (event) => Promise<void>
  * @param {Object} [boundUser] - 已绑定的用户信息 { username, role, display_name }
- * @returns {Promise<{ text: string, newMessages: Array }>} - 回复文本 + 本轮新增的消息（含 tool_use/tool_result）
+ * @param {string[]} [toolLog] - 之前轮次的工具调用摘要（注入 system prompt）
+ * @returns {Promise<{ text: string, toolSummaries: string[] }>} - 回复文本 + 本轮工具调用摘要
  */
-export async function chat(userText, history = [], onProgress = null, boundUser = null) {
+export async function chat(userText, history = [], onProgress = null, boundUser = null, toolLog = []) {
   const apiKey = process.env.MINIMAX_API_KEY;
-  if (!apiKey) return { text: '[Bot 未配置 MINIMAX_API_KEY]', newMessages: [] };
+  if (!apiKey) return { text: '[Bot 未配置 MINIMAX_API_KEY]', toolSummaries: [] };
 
   const model = process.env.MINIMAX_MODEL || 'MiniMax-M2.7';
   const tools = boundUser ? TOOL_DEFINITIONS : TOOL_DEFINITIONS_CHAT_ONLY;
 
+  // 传入干净的文本历史 + 当前用户消息（toolUseLoop 内部会追加 tool 交互）
   const messages = [
     ...history,
     { role: 'user', content: userText },
   ];
-  const startLen = messages.length;
 
   try {
-    const text = await toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools);
-    // messages 在 toolUseLoop 中被原地追加了 assistant/tool_result 消息
-    const newMessages = messages.slice(startLen);
-    return { text, newMessages };
+    const { text, toolSummaries } = await toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools, toolLog);
+    return { text, toolSummaries };
   } catch (err) {
     console.error('[Bot/LLM] Error:', err.message);
     if (onProgress) await onProgress({ type: 'error', text: ERROR_MESSAGE }).catch(() => {});
-    return { text: ERROR_MESSAGE, newMessages: [] };
+    return { text: ERROR_MESSAGE, toolSummaries: [] };
   }
 }
 
-async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools) {
+async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools, toolLog) {
   let thinkingText = '';
   let thinkingEmitted = false;
-  const toolSteps = [];   // {name, done}
+  const toolSteps = [];      // {name, done} — UI 进度用
+  const toolSummaries = [];  // 本轮工具调用摘要 — 存入 session.toolLog
   const emit = onProgress || (() => Promise.resolve());
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body = {
       model,
       max_tokens: MAX_TOKENS,
-      system: buildSystemPrompt(boundUser),
+      system: buildSystemPrompt(boundUser, toolLog),
       tools: tools.length > 0 ? tools : undefined,
       messages,
     };
@@ -179,7 +183,7 @@ async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools
         ? partialText + '\n\n_(回复过长被截断)_'
         : ERROR_MESSAGE;
       await emit({ type: toolSteps.length > 0 ? 'complete' : 'direct_reply', text: finalText, thinkingText, toolSteps });
-      return finalText;
+      return { text: finalText, toolSummaries };
     }
 
     // ── 不需要工具：直接回复 ──
@@ -188,13 +192,11 @@ async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools
       const finalText = textBlocks.map(b => b.text).join('\n') || ERROR_MESSAGE;
 
       if (toolSteps.length === 0) {
-        // 没调过工具 → 直接回复（闲聊、简单问题）
         await emit({ type: 'direct_reply', text: finalText });
       } else {
-        // 调过工具 → 完成
         await emit({ type: 'complete', text: finalText, thinkingText, toolSteps });
       }
-      return finalText;
+      return { text: finalText, toolSummaries };
     }
 
     // ── 模型要调工具 ──
@@ -246,6 +248,10 @@ async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools
       if (isError) toolResult.is_error = true;
       toolResults.push(toolResult);
 
+      // 记录工具调用摘要（存入 session.toolLog）
+      const inputBrief = JSON.stringify(block.input).slice(0, 80);
+      toolSummaries.push(`${block.name}(${inputBrief}) → ${isError ? '失败' : '成功'}`);
+
       // 标记这个工具完成
       const step = toolSteps.find(s => s.name === block.name && !s.done);
       if (step) step.done = true;
@@ -257,7 +263,7 @@ async function toolUseLoop(apiKey, model, messages, onProgress, boundUser, tools
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return '查询过程过于复杂，请尝试更简单的问题。';
+  return { text: '查询过程过于复杂，请尝试更简单的问题。', toolSummaries };
 }
 
 /**
