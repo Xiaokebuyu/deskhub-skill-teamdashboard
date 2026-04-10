@@ -8,6 +8,7 @@ import { chat } from './llm.js';
 import { getSession, updateSession, startSessionCleanup } from './session.js';
 import { startChangeDetector } from './change-detector.js';
 import { startPatrol } from './patrol.js';
+import { enqueueMessage } from './concurrency.js';
 import {
   buildThinkingCard,
   buildProgressCard,
@@ -49,78 +50,82 @@ async function handleMessage(text, chatId, userId, chatType) {
   const receiveId = chatType === 'p2p' ? userId : chatId;
   const receiveIdType = chatType === 'p2p' ? 'open_id' : 'chat_id';
 
-  let cardMessageId = null;  // 当前卡片的 message_id
+  const { status } = await enqueueMessage(userId, async () => {
+    let cardMessageId = null;
 
-  const onProgress = async (event) => {
-    switch (event.type) {
-      case 'thinking': {
-        // 模型先说了一句话 + 可能有思考过程，发出初始卡片
-        const card = buildThinkingCard(event.text, event.thinkingContent);
-        cardMessageId = await sendCardGetId(receiveId, receiveIdType, card);
-        break;
-      }
-
-      case 'tool_start': {
-        // 开始调用工具，更新卡片显示进度
-        const card = buildProgressCard(event.thinkingText, event.toolSteps, event.thinkingContent);
-        if (cardMessageId) {
-          await updateCard(cardMessageId, card);
-        } else {
+    const onProgress = async (event) => {
+      switch (event.type) {
+        case 'thinking': {
+          const card = buildThinkingCard(event.text, event.thinkingContent);
           cardMessageId = await sendCardGetId(receiveId, receiveIdType, card);
+          break;
         }
-        break;
-      }
 
-      case 'tool_done': {
-        // 工具执行完，更新进度（打勾）
-        if (cardMessageId) {
+        case 'tool_start': {
           const card = buildProgressCard(event.thinkingText, event.toolSteps, event.thinkingContent);
-          await updateCard(cardMessageId, card);
+          if (cardMessageId) {
+            await updateCard(cardMessageId, card);
+          } else {
+            cardMessageId = await sendCardGetId(receiveId, receiveIdType, card);
+          }
+          break;
         }
-        break;
-      }
 
-      case 'complete': {
-        // 最终结果，更新卡片（带思考过程）
-        const card = buildFinalCard(event.text);
-        if (cardMessageId) {
-          await updateCard(cardMessageId, card);
-        } else {
+        case 'tool_done': {
+          if (cardMessageId) {
+            const card = buildProgressCard(event.thinkingText, event.toolSteps, event.thinkingContent);
+            await updateCard(cardMessageId, card);
+          }
+          break;
+        }
+
+        case 'complete': {
+          const card = buildFinalCard(event.text);
+          if (cardMessageId) {
+            await updateCard(cardMessageId, card);
+          } else {
+            await sendCard(receiveId, receiveIdType, card);
+          }
+          break;
+        }
+
+        case 'direct_reply': {
+          const card = buildReplyCard(event.text);
           await sendCard(receiveId, receiveIdType, card);
+          break;
         }
-        break;
-      }
 
-      case 'direct_reply': {
-        // 不需要工具的直接回复，发一张普通卡片
-        const card = buildReplyCard(event.text);
+        case 'error': {
+          const card = buildErrorCard(event.text);
+          if (cardMessageId) {
+            await updateCard(cardMessageId, card);
+          } else {
+            await sendCard(receiveId, receiveIdType, card);
+          }
+          break;
+        }
+      }
+    };
+
+    try {
+      const history = getSession(userId);
+      const reply = await chat(text, history, onProgress);
+      updateSession(userId, text, reply);
+    } catch (err) {
+      console.error('[Bot] 消息处理错误:', err);
+      const card = buildErrorCard('抱歉，我暂时无法处理请求，请稍后再试。');
+      if (cardMessageId) {
+        await updateCard(cardMessageId, card);
+      } else {
         await sendCard(receiveId, receiveIdType, card);
-        break;
-      }
-
-      case 'error': {
-        const card = buildErrorCard(event.text);
-        if (cardMessageId) {
-          await updateCard(cardMessageId, card);
-        } else {
-          await sendCard(receiveId, receiveIdType, card);
-        }
-        break;
       }
     }
-  };
+  });
 
-  try {
-    const history = getSession(userId);
-    const reply = await chat(text, history, onProgress);
-    updateSession(userId, text, reply);
-  } catch (err) {
-    console.error('[Bot] 消息处理错误:', err);
-    const card = buildErrorCard('抱歉，我暂时无法处理请求，请稍后再试。');
-    if (cardMessageId) {
-      await updateCard(cardMessageId, card);
-    } else {
-      await sendCard(receiveId, receiveIdType, card);
-    }
+  // 背压：队列已满时回复友好提示
+  if (status === 'backpressure') {
+    await sendCard(receiveId, receiveIdType,
+      buildReplyCard('我还在处理你之前的消息，稍等一下~')
+    );
   }
 }

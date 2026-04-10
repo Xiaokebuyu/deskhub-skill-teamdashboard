@@ -9,13 +9,10 @@ import * as lark from '@larksuiteoapi/node-sdk';
 let client = null;
 let botOpenId = null;
 
-// 消息去重（三层防护）
-const recentMessageIds = new Set();          // 1. message_id 去重
+// 消息去重（message_id / event_id 级别，防飞书事件重发）
+// per-user 串行化由 concurrency.js 的 mutex 负责
+const recentMessageIds = new Set();
 const MESSAGE_DEDUP_TTL = 60000;
-
-const processingUsers = new Set();            // 2. per-user 处理锁：正在处理中的用户
-const recentContentKeys = new Set();          // 3. 内容去重：同用户+同内容 30s 内跳过
-const CONTENT_DEDUP_TTL = 30000;
 
 /**
  * 初始化飞书客户端并启动消息监听
