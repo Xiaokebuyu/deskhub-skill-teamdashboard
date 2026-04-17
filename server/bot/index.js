@@ -102,22 +102,23 @@ class ChatCardStreamer {
     this.flushState = new Map();
   }
 
-  /** 把一段操作排进串行队列，保证 sequence 单调到达 */
+  /**
+   * 把一段操作排进串行队列，保证 sequence 单调到达
+   * 错误对外传递（让 _memoize 能感知失败重试），对内吞掉（让队列继续转动）
+   */
   _enqueue(label, fn) {
-    const next = this._opQueue.then(fn).catch(err => {
-      console.error(`[Bot/Stream] ${label} 失败:`, err?.message || err);
-    });
-    this._opQueue = next.catch(() => {});  // 单根链不被错误中断
+    const next = this._opQueue.then(fn);
+    this._opQueue = next.catch(() => {});  // 内部链路始终恢复，不被单次失败中断
+    next.catch(() => {});                  // 防御 unhandled rejection；feishu.js 已 log 具体错误
     return next;
   }
 
   /**
-   * 备忘锁辅助：promise 失败时自动清空，下个调用可重试，避免死锁
+   * 备忘锁：promise 失败时清空，下个调用重试。避免一次失败永久卡住面板
    */
   _memoize(slot, factory) {
     if (this[slot]) return this[slot];
     const p = factory().catch(err => {
-      // 失败时清空备忘，下次调用从头来过
       if (this[slot] === p) this[slot] = null;
       throw err;
     });
@@ -125,51 +126,62 @@ class ChatCardStreamer {
     return p;
   }
 
-  async ensureCardCreated() {
-    return this._memoize('_cardPromise', async () => {
+  /**
+   * card 创建：直接 promise，不走 _opQueue（_opQueue 内部任务可能 await 它）
+   */
+  ensureCardCreated() {
+    return this._memoize('_cardPromise', () => (async () => {
       const cid = await createCardEntity(buildChatCardInitial());
       if (!cid) throw new Error('createCardEntity 返回 null');
       this.cardId = cid;
       this.messageId = await sendCardById(this.receiveId, this.receiveIdType, cid);
       console.log(`[Bot/Stream] 卡片已创建 cardId=${cid}`);
-    });
+    })());
   }
 
-  async ensureThinkingPanel() {
-    return this._memoize('_thinkingPanelPromise', async () => {
-      await this.ensureCardCreated();
-      await this._enqueue('insert thinking_panel', async () => {
-        await insertCardElements(this.cardId, buildThinkingPanel(), {
+  /**
+   * thinking 面板：必须**同步** enqueue 插入任务，确保排在后续 stream 之前
+   * 之前用 async 包装导致 enqueue 推到下个 microtask，stream 抢先入队
+   * 失败时（含 insertCardElements 返 false）抛错让 memo 重置
+   */
+  ensureThinkingPanel() {
+    return this._memoize('_thinkingPanelPromise', () =>
+      this._enqueue('insert thinking_panel', async () => {
+        await this.ensureCardCreated();
+        const ok = await insertCardElements(this.cardId, buildThinkingPanel(), {
           type: 'insert_before',
           targetElementId: 'main_text',
         });
+        if (!ok) throw new Error('insertCardElements(thinking_panel) 返回 false');
         console.log('[Bot/Stream] thinking_panel 已插入');
-      });
-    });
+      })
+    );
   }
 
-  async ensureToolPanel() {
-    return this._memoize('_toolPanelPromise', async () => {
-      await this.ensureCardCreated();
-      await this._enqueue('insert tool_panel', async () => {
-        await insertCardElements(this.cardId, buildToolPanel(), {
+  ensureToolPanel() {
+    return this._memoize('_toolPanelPromise', () =>
+      this._enqueue('insert tool_panel', async () => {
+        await this.ensureCardCreated();
+        const ok = await insertCardElements(this.cardId, buildToolPanel(), {
           type: 'insert_before',
           targetElementId: 'main_text',
         });
+        if (!ok) throw new Error('insertCardElements(tool_panel) 返回 false');
         console.log('[Bot/Stream] tool_panel 已插入');
-      });
-    });
+      })
+    );
   }
 
-  async collapseThinking() {
-    if (!this._thinkingPanelPromise) return;
-    return this._memoize('_thinkingCollapsePromise', async () => {
-      await this._thinkingPanelPromise;  // 等面板真正存在
-      await this._enqueue('collapse thinking_panel', async () => {
-        await patchCardElement(this.cardId, 'thinking_panel', THINKING_PANEL_DONE_PATCH);
+  collapseThinking() {
+    if (!this._thinkingPanelPromise) return Promise.resolve();
+    return this._memoize('_thinkingCollapsePromise', () =>
+      this._enqueue('collapse thinking_panel', async () => {
+        await this._thinkingPanelPromise;  // 等面板真正存在
+        const ok = await patchCardElement(this.cardId, 'thinking_panel', THINKING_PANEL_DONE_PATCH);
+        if (!ok) throw new Error('patchCardElement(thinking_panel) 返回 false');
         console.log('[Bot/Stream] thinking_panel 已收起');
-      });
-    });
+      })
+    );
   }
 
   // ── 节流推送 ──
