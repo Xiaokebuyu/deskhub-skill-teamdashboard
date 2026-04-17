@@ -1,17 +1,20 @@
 /**
  * 飞书 LLM 机器人入口
  *
- * 卡片流式生命周期（CardKit）：
- *   1. 用户发消息
- *   2. 第一个 chunk 到达 → createCardEntity + sendCardById（拿 card_id）
- *   3. thinking_chunks → 插入 thinking_panel + 流式推 thinking_text
- *   4. 首个 text_chunk → 收起 thinking_panel
- *   5. tool_start → 插入 tool_panel + 推 tool_progress
- *   6. tool_done → 更新 tool_progress（✅ 替换 ⏳）
- *   7. text_chunks → 流式推 main_text
- *   8. complete → 收起 tool_panel + closeStreamingMode
+ * 卡片流式生命周期（CardKit v2 场景包版）：
+ *   1. 用户发消息 → detectScene() 按关键词预判场景（5 种）
+ *   2. createCardEntity + sendCardById 预发场景化空卡
+ *   3. thinking chunks → append 思考胶囊 thinking_pill_r{round}
+ *   4. 首个 text chunk → delete 当前胶囊，streamCardText 到 main_text_0
+ *   5. 下一轮 thinking chunks → append 新胶囊（在 main_text_0 之后）
+ *   6. complete → card.update 切完成态 header（绿勾 + 随机完成 subtitle · 耗时）
  *
- * 节流：per-element 500ms 或 50 字符强制 flush
+ * 跟旧版的 3 处关键差异：
+ *   - 思考胶囊"每轮独立，瞬态"（text 一到就 delete，不折叠）
+ *   - 跳过工具面板 UI（工具调用淡化，不再展示 ⏳/✅ 列表）
+ *   - 主文本跨轮累积到同一 main_text_0，不清零
+ *
+ * 节流：per-element 300ms 或 30 字符强制 flush
  */
 
 import {
@@ -21,7 +24,8 @@ import {
   sendCardById,
   streamCardText,
   insertCardElements,
-  patchCardElement,
+  deleteCardElement,
+  updateCardEntity,
   closeStreamingMode,
 } from './feishu.js';
 import { chat } from './llm.js';
@@ -32,12 +36,10 @@ import { enqueueMessage } from './concurrency.js';
 import { getUserByOpenId, bindFeishuUser } from '../mcp/db-ops.js';
 import {
   buildChatCardInitial,
-  buildThinkingPanel,
-  buildToolPanel,
-  buildToolPanelDonePatch,
-  buildToolProgressMarkdown,
+  buildThinkingPill,
+  buildCompletionCard,
+  buildErrorCard,
   buildSimpleCard,
-  THINKING_PANEL_DONE_PATCH,
 } from './card-templates.js';
 
 const THROTTLE_MS = 300;
@@ -67,6 +69,33 @@ export async function startBot() {
 }
 
 // ============================================================
+//  场景检测（规则预判）
+// ============================================================
+
+/**
+ * 按用户消息关键词判断场景包，决定 header icon/color/文案池
+ * 优先级：error（保留，仅在真错误时触发）> plan > data > deepthink > default
+ */
+function detectScene(text) {
+  const t = text || '';
+
+  // 工单关键词：具体 ID 或 工单/方案 相关词（最强信号）
+  if (/\b[PM]-\d+/.test(t)) return 'plan';
+  if (/工单|方案|定稿|评分|评测|维度/.test(t)) return 'plan';
+
+  // 深度思考：分析/对比/判断类动词优先于 data 查询
+  if (/为什么|怎么看|分析|对比|建议|怎么办|思考|评价|判断/.test(t)) return 'deepthink';
+
+  // 数据查询关键词
+  if (/列表|有哪些|多少|统计|最近|热门|下载|排行|访问量|调用|数据/.test(t)) return 'data';
+
+  // 超长消息（≥50 字）也走深度思考
+  if (t.length > 50) return 'deepthink';
+
+  return 'default';
+}
+
+// ============================================================
 //  ChatCardStreamer — 单条消息处理过程中的卡片状态机
 // ============================================================
 
@@ -75,113 +104,96 @@ class ChatCardStreamer {
    * @param {string} receiveId
    * @param {string} receiveIdType
    * @param {object} [opts]
-   * @param {string} [opts.presetCardId] - 收到消息时已预创建的 cardId（TTFP 优化）
+   * @param {string} [opts.scene='default']
+   * @param {string} [opts.presetCardId]
    * @param {string} [opts.presetMessageId]
    */
-  constructor(receiveId, receiveIdType, { presetCardId = null, presetMessageId = null } = {}) {
+  constructor(receiveId, receiveIdType, { scene = 'default', presetCardId = null, presetMessageId = null } = {}) {
     this.receiveId = receiveId;
     this.receiveIdType = receiveIdType;
+    this.scene = scene;
+    this.startTime = Date.now();
     this.cardId = presetCardId;
     this.messageId = presetMessageId;
 
-    this.runningText = '';        // 当前轮答案，轮间重置
-    this.runningThinking = '';    // 全局思考链
-    this.currentToolSteps = [];
+    this.runningText = '';         // 跨轮累积（不清零）
+    this.runningThinkingByRound = new Map();   // round → 该轮思考累积
 
-    // ── Promise 备忘锁，防止并发 chunk 重复触发 insert/patch ──
-    // 预创建场景：cardId 已就绪，把 _cardPromise 设为已 resolve，让 ensureCardCreated 直接返回
+    // ── Promise 备忘锁 ──
     this._cardPromise = presetCardId ? Promise.resolve() : null;
-    this._thinkingPanelPromise = null;
-    this._toolPanelPromise = null;
-    this._thinkingCollapsePromise = null;
+    this._pillPromises = new Map();   // round → insert pill promise
+    this._currentPillRound = null;    // 当前屏幕上存在的思考胶囊的 round，无则 null
 
-    // ── per-card 顺序队列：所有 CardKit 调用串行化，保证 sequence 接收顺序 ──
+    // ── per-card FIFO op queue ──
     this._opQueue = Promise.resolve();
 
-    // per-element 节流：elementId -> { lastFlushTime, lastFlushedLen, timer }
+    // per-element 节流
     this.flushState = new Map();
   }
 
-  /**
-   * 把一段操作排进串行队列，保证 sequence 单调到达
-   * 错误对外传递（让 _memoize 能感知失败重试），对内吞掉（让队列继续转动）
-   */
   _enqueue(label, fn) {
     const next = this._opQueue.then(fn);
-    this._opQueue = next.catch(() => {});  // 内部链路始终恢复，不被单次失败中断
-    next.catch(() => {});                  // 防御 unhandled rejection；feishu.js 已 log 具体错误
+    this._opQueue = next.catch(() => {});
+    next.catch(() => {});
     return next;
   }
 
-  /**
-   * 备忘锁：promise 失败时清空，下个调用重试。避免一次失败永久卡住面板
-   */
-  _memoize(slot, factory) {
-    if (this[slot]) return this[slot];
+  _memoize(map, key, factory) {
+    if (map.has(key)) return map.get(key);
     const p = factory().catch(err => {
-      if (this[slot] === p) this[slot] = null;
+      if (map.get(key) === p) map.delete(key);
       throw err;
     });
-    this[slot] = p;
+    map.set(key, p);
     return p;
   }
 
   /**
-   * card 创建：直接 promise，不走 _opQueue（_opQueue 内部任务可能 await 它）
+   * card 创建：不进队列（队列内任务会 await 它，进队列死锁）
    */
   ensureCardCreated() {
-    return this._memoize('_cardPromise', () => (async () => {
-      const cid = await createCardEntity(buildChatCardInitial());
+    if (this._cardPromise) return this._cardPromise;
+    this._cardPromise = (async () => {
+      const cid = await createCardEntity(buildChatCardInitial(this.scene));
       if (!cid) throw new Error('createCardEntity 返回 null');
       this.cardId = cid;
       this.messageId = await sendCardById(this.receiveId, this.receiveIdType, cid);
-      console.log(`[Bot/Stream] 卡片已创建 cardId=${cid}`);
-    })());
+      console.log(`[Bot/Stream] 卡片已创建 cardId=${cid} scene=${this.scene}`);
+    })().catch(err => {
+      this._cardPromise = null;
+      throw err;
+    });
+    return this._cardPromise;
   }
 
   /**
-   * thinking 面板：必须**同步** enqueue 插入任务，确保排在后续 stream 之前
-   * 之前用 async 包装导致 enqueue 推到下个 microtask，stream 抢先入队
-   * 失败时（含 insertCardElements 返 false）抛错让 memo 重置
+   * 为 round 插入思考胶囊 — **同步** enqueue 保证排在后续 stream 之前
    */
-  ensureThinkingPanel() {
-    return this._memoize('_thinkingPanelPromise', () =>
-      this._enqueue('insert thinking_panel', async () => {
+  ensureThinkingPillForRound(round) {
+    return this._memoize(this._pillPromises, round, () =>
+      this._enqueue(`insert thinking_pill_r${round}`, async () => {
         await this.ensureCardCreated();
-        const ok = await insertCardElements(this.cardId, buildThinkingPanel(), {
-          type: 'insert_before',
-          targetElementId: 'main_text',
+        const ok = await insertCardElements(this.cardId, buildThinkingPill(round), {
+          type: 'append',
         });
-        if (!ok) throw new Error('insertCardElements(thinking_panel) 返回 false');
-        console.log('[Bot/Stream] thinking_panel 已插入');
+        if (!ok) throw new Error(`insertCardElements(thinking_pill_r${round}) 返回 false`);
+        console.log(`[Bot/Stream] thinking_pill_r${round} 已插入`);
       })
     );
   }
 
-  ensureToolPanel() {
-    return this._memoize('_toolPanelPromise', () =>
-      this._enqueue('insert tool_panel', async () => {
-        await this.ensureCardCreated();
-        const ok = await insertCardElements(this.cardId, buildToolPanel(), {
-          type: 'insert_before',
-          targetElementId: 'main_text',
-        });
-        if (!ok) throw new Error('insertCardElements(tool_panel) 返回 false');
-        console.log('[Bot/Stream] tool_panel 已插入');
-      })
-    );
-  }
-
-  collapseThinking() {
-    if (!this._thinkingPanelPromise) return Promise.resolve();
-    return this._memoize('_thinkingCollapsePromise', () =>
-      this._enqueue('collapse thinking_panel', async () => {
-        await this._thinkingPanelPromise;  // 等面板真正存在
-        const ok = await patchCardElement(this.cardId, 'thinking_panel', THINKING_PANEL_DONE_PATCH);
-        if (!ok) throw new Error('patchCardElement(thinking_panel) 返回 false');
-        console.log('[Bot/Stream] thinking_panel 已收起');
-      })
-    );
+  /**
+   * 删除某 round 的思考胶囊（text 首 chunk 到来触发）
+   */
+  deleteThinkingPill(round) {
+    if (round === null || round === undefined) return Promise.resolve();
+    const pillPromise = this._pillPromises.get(round);
+    if (!pillPromise) return Promise.resolve();   // 该轮从未创建胶囊
+    return this._enqueue(`delete thinking_pill_r${round}`, async () => {
+      await pillPromise;   // 等胶囊真正存在
+      await deleteCardElement(this.cardId, `thinking_pill_r${round}`);
+      console.log(`[Bot/Stream] thinking_pill_r${round} 已删除`);
+    });
   }
 
   // ── 节流推送 ──
@@ -201,7 +213,7 @@ class ChatCardStreamer {
     const elapsed = Date.now() - st.lastFlushTime;
 
     if (elapsed >= THROTTLE_MS || newChars >= FLUSH_AT_CHARS) {
-      this.flushElement(elementId, content);  // fire-and-forget；队列内串行
+      this.flushElement(elementId, content);
       return;
     }
 
@@ -221,9 +233,8 @@ class ChatCardStreamer {
     st.lastFlushedLen = content.length;
 
     return this._enqueue(`stream ${elementId}`, async () => {
-      // 等卡片真正创建完毕（trailing flush 可能在 cardId 就绪前触发）
       await this.ensureCardCreated();
-      if (!this.cardId) return;  // 创建彻底失败，丢弃更新
+      if (!this.cardId) return;
       await streamCardText(this.cardId, elementId, content);
     });
   }
@@ -236,56 +247,75 @@ class ChatCardStreamer {
 
   // ── 事件处理 ──
 
-  onThinkingChunk(delta) {
-    this.runningThinking += delta;
-    // ensureThinkingPanel 已 promise 备忘，并发安全
-    this.ensureThinkingPanel().catch(() => {});
-    this.scheduleFlush('thinking_text', () => this.runningThinking);
+  onThinkingChunk(delta, round = 0) {
+    // 累积到该轮的 thinking 池
+    const cur = this.runningThinkingByRound.get(round) || '';
+    this.runningThinkingByRound.set(round, cur + delta);
+
+    // 如果当前屏幕上没有胶囊（或者是不同 round 的残留），建立新胶囊
+    if (this._currentPillRound !== round) {
+      // 清理任何残留的旧胶囊（比如前一轮只有 thinking 没有 text，胶囊还留着）
+      if (this._currentPillRound !== null && this._currentPillRound !== round) {
+        this.deleteThinkingPill(this._currentPillRound);
+      }
+      this.ensureThinkingPillForRound(round).catch(() => {});
+      this._currentPillRound = round;
+    }
+
+    this.scheduleFlush(`thinking_text_r${round}`, () => this.runningThinkingByRound.get(round));
   }
 
-  onTextChunk(delta) {
+  onTextChunk(delta, round = 0) {
     this.runningText += delta;
     this.ensureCardCreated().catch(() => {});
-    // 首个答案 chunk 触发收起思考面板（队列内自动 await 面板存在）
-    if (this._thinkingPanelPromise && !this._thinkingCollapsePromise) {
-      this.collapseThinking();
+
+    // 首个 text chunk 到来，删掉当前胶囊（如果有）
+    if (this._currentPillRound !== null) {
+      const toDelete = this._currentPillRound;
+      this._currentPillRound = null;
+      this.deleteThinkingPill(toDelete);
     }
-    this.scheduleFlush('main_text', () => this.runningText);
+
+    this.scheduleFlush('main_text_0', () => this.runningText);
   }
 
-  async onToolStart(toolSteps) {
-    this.currentToolSteps = toolSteps || [];
-    this.ensureToolPanel().catch(() => {});
-    this.collapseThinking();
-    this.flushElement('tool_progress', buildToolProgressMarkdown(this.currentToolSteps));
+  async onToolStart(_toolSteps) {
+    // 工具调用淡化：不插任何 UI，只确保卡片已创建
+    this.ensureCardCreated().catch(() => {});
   }
 
-  async onToolDone(toolSteps) {
-    this.currentToolSteps = toolSteps || [];
-    if (this._toolPanelPromise) {
-      this.flushElement('tool_progress', buildToolProgressMarkdown(this.currentToolSteps));
+  async onToolDone(_toolSteps) {
+    // 下一轮文本接续：给累积文本加段落间隙（如果已有内容）
+    if (this.runningText && !this.runningText.endsWith('\n\n')) {
+      this.runningText += '\n\n';
     }
-    this.runningText = '';   // 下一轮文本重新累积
   }
 
   async onComplete(finalText) {
     this.cancelAllPending();
     if (!this.cardId) {
-      // 整个流式过程没产生任何 chunks（极少见），降级一次性发送
+      // 整个流式过程没产生任何 chunks，降级一次性发
       await createAndSendCard(this.receiveId, this.receiveIdType,
         buildSimpleCard(finalText, { level: 'info' }));
       return;
     }
-    this.collapseThinking();
-    this.flushElement('main_text', finalText);
-    if (this._toolPanelPromise) {
-      this._enqueue('collapse tool_panel', () =>
-        patchCardElement(this.cardId, 'tool_panel',
-          buildToolPanelDonePatch(this.currentToolSteps.length))
-      );
+    // 清理残留胶囊（比如最后一轮只有 thinking 没有 text 就完成）
+    if (this._currentPillRound !== null) {
+      this.deleteThinkingPill(this._currentPillRound);
+      this._currentPillRound = null;
     }
-    this._enqueue('closeStreamingMode', () => closeStreamingMode(this.cardId));
-    await this._opQueue;   // 等所有排队操作完成
+    // 先流式把最终文本推完（保留打字机效果）
+    this.flushElement('main_text_0', finalText);
+
+    // 等队列全部排完（insert/delete/stream 全部落地）
+    await this._opQueue;
+
+    // card.update 整体切到完成态（header 变绿勾 + 完成 subtitle，body 保留 main_text_0）
+    const durationMs = Date.now() - this.startTime;
+    const finalCard = buildCompletionCard(this.scene, durationMs, finalText);
+    await this._enqueue('final card.update', () => updateCardEntity(this.cardId, finalCard));
+    await this._opQueue;
+    console.log(`[Bot/Stream] 已切到完成态 scene=${this.scene} duration=${(durationMs/1000).toFixed(1)}s`);
   }
 
   async onDirectReply(finalText) {
@@ -295,22 +325,35 @@ class ChatCardStreamer {
         buildSimpleCard(finalText, { level: 'info' }));
       return;
     }
-    this.collapseThinking();
-    this.flushElement('main_text', finalText);
-    this._enqueue('closeStreamingMode', () => closeStreamingMode(this.cardId));
+    if (this._currentPillRound !== null) {
+      this.deleteThinkingPill(this._currentPillRound);
+      this._currentPillRound = null;
+    }
+    this.flushElement('main_text_0', finalText);
+    await this._opQueue;
+
+    const durationMs = Date.now() - this.startTime;
+    const finalCard = buildCompletionCard(this.scene, durationMs, finalText);
+    await this._enqueue('final card.update', () => updateCardEntity(this.cardId, finalCard));
     await this._opQueue;
   }
 
   async onError(text) {
     this.cancelAllPending();
-    if (this.cardId) {
-      this.flushElement('main_text', text);
-      this._enqueue('closeStreamingMode', () => closeStreamingMode(this.cardId));
-      await this._opQueue;
-    } else {
+    if (!this.cardId) {
       await createAndSendCard(this.receiveId, this.receiveIdType,
         buildSimpleCard(text, { level: 'error' }));
+      return;
     }
+    // 清理胶囊 + 切错误态整卡
+    if (this._currentPillRound !== null) {
+      this.deleteThinkingPill(this._currentPillRound);
+      this._currentPillRound = null;
+    }
+    await this._opQueue;
+    const errorCard = buildErrorCard(text);
+    await this._enqueue('final card.update(error)', () => updateCardEntity(this.cardId, errorCard));
+    await this._opQueue;
   }
 }
 
@@ -347,23 +390,25 @@ async function handleMessage(text, chatId, userId, chatType) {
   const { status } = await enqueueMessage(userId, async () => {
     const boundUser = getUserByOpenId(userId);
 
-    // ── TTFP 优化：消息进入处理前，先把空卡片推到飞书 ──
-    // 用户在 LLM 响应前（2-7 秒 TTFT）就能看到"小合正在思考..."摘要，立刻有反馈。
-    // 失败则降级到 lazy 创建（首个 chunk 触发，与之前行为一致）。
+    // ── 场景预判 + TTFP 预创建 ──
+    const scene = detectScene(text);
+    console.log(`[Bot/Stream] scene=${scene} text=${text.slice(0, 40)}`);
+
     let presetCardId = null;
     let presetMessageId = null;
     try {
       const { cardId, messageId } = await createAndSendCard(
-        receiveId, receiveIdType, buildChatCardInitial()
+        receiveId, receiveIdType, buildChatCardInitial(scene)
       );
       presetCardId = cardId;
       presetMessageId = messageId;
-      if (cardId) console.log(`[Bot/Stream] 卡片预创建 cardId=${cardId}`);
+      if (cardId) console.log(`[Bot/Stream] 卡片预创建 cardId=${cardId} scene=${scene}`);
     } catch (err) {
       console.warn('[Bot] 卡片预创建失败，降级到首个 chunk 触发:', err.message);
     }
 
     const streamer = new ChatCardStreamer(receiveId, receiveIdType, {
+      scene,
       presetCardId,
       presetMessageId,
     });
@@ -372,10 +417,10 @@ async function handleMessage(text, chatId, userId, chatType) {
       try {
         switch (event.type) {
           case 'text_chunk':
-            if (event.delta) await streamer.onTextChunk(event.delta);
+            if (event.delta) streamer.onTextChunk(event.delta, event.round || 0);
             break;
           case 'thinking_chunk':
-            if (event.delta) await streamer.onThinkingChunk(event.delta);
+            if (event.delta) streamer.onThinkingChunk(event.delta, event.round || 0);
             break;
           case 'tool_start':
             await streamer.onToolStart(event.toolSteps);
@@ -392,7 +437,6 @@ async function handleMessage(text, chatId, userId, chatType) {
           case 'error':
             await streamer.onError(event.text);
             break;
-          // 'thinking' 一次性事件被流式 chunks 取代，忽略
         }
       } catch (err) {
         console.error(`[Bot] onProgress(${event.type}) 错误:`, err.message);

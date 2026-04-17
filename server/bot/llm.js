@@ -9,8 +9,8 @@
  *   - 8 轮 tool use 上限
  *
  * 进度事件回调（onProgress）：
- *   { type: 'text_chunk',     delta }
- *   { type: 'thinking_chunk', delta }
+ *   { type: 'text_chunk',     delta, round }
+ *   { type: 'thinking_chunk', delta, round }
  *   { type: 'tool_start',     tools, toolSteps }
  *   { type: 'tool_done',      tools, toolSteps }
  *   { type: 'complete',       text, toolSteps }
@@ -164,8 +164,8 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
       interleaved: true,
       executeTool,
 
-      onTextChunk: (delta) => emit({ type: 'text_chunk', delta }),
-      onThinkingChunk: (delta) => emit({ type: 'thinking_chunk', delta }),
+      onTextChunk: (delta, round) => emit({ type: 'text_chunk', delta, round }),
+      onThinkingChunk: (delta, round) => emit({ type: 'thinking_chunk', delta, round }),
 
       onToolStart: async (toolSteps) => {
         const tools = toolSteps.filter(s => !s.done).map(s => s.name);
