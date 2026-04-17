@@ -31,13 +31,19 @@ const STREAMING_CONFIG = {
 //  场景包（5 种）：icon + color + template + 文案池
 // ============================================================
 
-/** 场景对应的 header 视觉 */
+/**
+ * 场景对应的 header 视觉
+ * ⚠️ icon token 全部在 _probe-cards.js 里实测过，下面都是 ✓ 已生效的
+ * 可用候选（节选）：bitablegrid / bitablekanban / edit / pen / done / check /
+ * yes / close / close-bold / no / add / reduce / bell / info / warning /
+ * search / chat / calendar / file-link-docx _outlined
+ */
 const SCENE_HEADERS = {
-  default:   { icon: 'myai-magic-wand_outlined', color: 'orange',    template: 'default' },
-  data:      { icon: 'chart-ring_outlined',      color: 'indigo',    template: 'default' },
-  plan:      { icon: 'edit_outlined',            color: 'violet',    template: 'default' },
-  deepthink: { icon: 'myai-magic-wand_outlined', color: 'turquoise', template: 'default' },
-  error:     { icon: 'close-circle_outlined',    color: 'red',       template: 'red'     },
+  default:   { icon: 'chat_outlined',          color: 'orange',    template: 'default' },
+  data:      { icon: 'bitablekanban_outlined', color: 'indigo',    template: 'default' },
+  plan:      { icon: 'edit_outlined',          color: 'violet',    template: 'default' },
+  deepthink: { icon: 'search_outlined',        color: 'turquoise', template: 'default' },
+  error:     { icon: 'close_outlined',         color: 'red',       template: 'red'     },
 };
 
 /** 完成态 header（场景无关，永远绿勾 + "小合"） */
@@ -293,7 +299,7 @@ export function buildPersonalCard(message, { from = BOT_NAME } = {}) {
     header: {
       title: { tag: 'plain_text', content: 'DeskHub 提醒' },
       subtitle: { tag: 'plain_text', content: `来自 ${from}` },
-      icon: { tag: 'standard_icon', token: 'bell-ring_outlined', color: 'orange' },
+      icon: { tag: 'standard_icon', token: 'bell_outlined', color: 'orange' },
       template: 'default',
     },
     body: {
@@ -325,7 +331,7 @@ export function buildPatrolCard(message, { attentionCount = 0 } = {}) {
       title: { tag: 'plain_text', content: '每日巡检' },
       subtitle: { tag: 'plain_text', content: dateStr() },
       text_tag_list: tagList,
-      icon: { tag: 'standard_icon', token: 'chart-ring_outlined', color: 'indigo' },
+      icon: { tag: 'standard_icon', token: 'bitablekanban_outlined', color: 'indigo' },
       template: 'default',
     },
     body: {
@@ -347,10 +353,10 @@ export function buildPatrolCard(message, { attentionCount = 0 } = {}) {
 // ============================================================
 
 const SIMPLE_LEVEL_CONFIG = {
-  info:    { token: 'info_outlined',             color: 'grey',   template: 'default' },
-  success: { token: 'done_outlined',             color: 'green',  template: 'default' },
-  warn:    { token: 'warning-triangle_outlined', color: 'orange', template: 'default' },
-  error:   { token: 'close-circle_outlined',     color: 'red',    template: 'red' },
+  info:    { token: 'info_outlined',    color: 'grey',   template: 'default' },
+  success: { token: 'done_outlined',    color: 'green',  template: 'default' },
+  warn:    { token: 'warning_outlined', color: 'orange', template: 'default' },
+  error:   { token: 'close_outlined',   color: 'red',    template: 'red' },
 };
 
 export function buildSimpleCard(content, { level = 'info', title = BOT_NAME, subtitle } = {}) {
