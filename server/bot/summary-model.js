@@ -21,11 +21,15 @@ const MAX_SUMMARY_TOKENS = 50;
  * @returns {Promise<string|null>} 摘要文本，失败/超时返 null
  */
 export async function summarizeThinking(rawThinking) {
-  if (!rawThinking || rawThinking.trim().length < 10) return null;
+  if (!rawThinking || rawThinking.trim().length < 10) {
+    console.log(`[Bot/Summary] 跳过（内容过短 ${rawThinking?.length || 0} 字）`);
+    return null;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+  const t0 = Date.now();
   try {
     const res = await client.messages.create({
       model: SUMMARY_MODEL,
@@ -38,15 +42,26 @@ export async function summarizeThinking(rawThinking) {
       ],
     }, { signal: controller.signal });
 
+    const elapsed = Date.now() - t0;
+    const blockTypes = Array.isArray(res.content) ? res.content.map(b => b.type).join(',') : 'none';
     const text = res.content?.filter(b => b.type === 'text').map(b => b.text).join('').trim();
-    if (!text) return null;
 
-    // 取第一行（防止模型多输出），截到 24 字兜底
+    if (!text) {
+      console.warn(`[Bot/Summary] 响应 text 为空，${elapsed}ms blocks=[${blockTypes}]`);
+      return null;
+    }
+
     const firstLine = text.split('\n')[0].trim();
-    return firstLine.length > 24 ? firstLine.slice(0, 24) + '…' : firstLine;
+    const final = firstLine.length > 24 ? firstLine.slice(0, 24) + '…' : firstLine;
+    console.log(`[Bot/Summary] 成功 ${elapsed}ms → "${final}"`);
+    return final;
   } catch (err) {
-    if (err.name !== 'AbortError') {
-      console.warn('[Bot/Summary] 摘要失败:', err.message);
+    const elapsed = Date.now() - t0;
+    if (err.name === 'AbortError') {
+      console.warn(`[Bot/Summary] 超时 aborted ${elapsed}ms（TIMEOUT_MS=${TIMEOUT_MS}）`);
+    } else {
+      console.warn(`[Bot/Summary] 失败 ${elapsed}ms: ${err.message}`);
+      if (err.status) console.warn(`  HTTP ${err.status}`, err.error);
     }
     return null;
   } finally {

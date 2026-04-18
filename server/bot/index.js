@@ -439,7 +439,15 @@ class ChatCardStreamer {
     }
     // 累积到该轮的 thinking 池
     const cur = this.runningThinkingByRound.get(round) || '';
-    this.runningThinkingByRound.set(round, cur + delta);
+    const full = cur + delta;
+    this.runningThinkingByRound.set(round, full);
+
+    // 同步到 _bodyElements 的胶囊嵌套 thinking_text 元素，保 onComplete 的 card.update
+    // 能把完整 thinking 内容带进去（否则 body 重建时只剩空字符串，用户展开胶囊啥也看不到）
+    const pillEl = this._bodyElements.find(e => e.element_id === `thinking_pill_r${round}`);
+    if (pillEl && pillEl.elements && pillEl.elements[0]) {
+      pillEl.elements[0].content = full;
+    }
 
     // 如果当前屏幕上没有胶囊（或者是不同 round 的残留），建立新胶囊
     if (this._currentPillRound !== round) {
@@ -459,6 +467,13 @@ class ChatCardStreamer {
     if (!this._headerResolved) {
       this._bufferedText += delta;
       this._pendingEvents.push({ type: 'text', delta, round });
+      const trimmed = this._bufferedText.replace(/^\s+/, '');
+      // 快失败：LLM 首文本不是 `[` 开头 → 不遵守 header 规约，立即 fallback 不等 2s
+      if (trimmed.length >= 2 && !trimmed.startsWith('[')) {
+        console.log(`[Bot/Stream] 首文本非 [[ 开头（"${trimmed.slice(0, 20)}..."），立即 fallback default`);
+        this._resolveHeader(null);
+        return;
+      }
       // 一旦 buffer 里出现 `]]` 说明至少一个 markup 闭合，或 100 字后兜底
       if (this._bufferedText.includes(']]') || this._bufferedText.length >= 100) {
         this._resolveHeader(this._bufferedText);
@@ -583,11 +598,30 @@ class ChatCardStreamer {
   }
 
   async onToolDone(_toolSteps) {
-    // 下一轮文本接续：给当前段加段落间隙（如果已有内容且不以 \n\n 结尾）
-    const seg = this._segments.find(s => s.id === this._currentSegmentId);
-    if (seg && seg.text && !seg.text.endsWith('\n\n')) {
-      this._appendToCurrentSegment('\n\n');
-    }
+    // 每轮 tool 跑完就开一个新 main_text 段，下一轮的 pill 和 text 都走新段
+    // 这样多轮对话的 layout 变成：text_0 / pill_r1 / text_1 / pill_r2 / text_2 ...
+    // 而不是全部 pill 堆在顶部挤爆 text_0
+    const prevSegId = this._currentSegmentId;
+    const newSegId = `main_text_${this._segments.length}`;
+    const newSeg = { id: newSegId, text: '' };
+    this._segments.push(newSeg);
+    this._currentSegmentId = newSegId;
+
+    // 在 _bodyElements 里 prevSeg 后面 splice 新段
+    const idx = this._bodyElements.findIndex(e => e.element_id === prevSegId);
+    const newSegEl = { tag: 'markdown', element_id: newSegId, content: '' };
+    if (idx >= 0) this._bodyElements.splice(idx + 1, 0, newSegEl);
+    else this._bodyElements.push(newSegEl);
+
+    // enqueue insert_after 创建新段元素
+    this._enqueue(`open seg ${newSegId} after tool`, async () => {
+      await this.ensureCardCreated();
+      if (!this.cardId) return;
+      await insertCardElements(this.cardId, [newSegEl], {
+        type: 'insert_after', targetElementId: prevSegId,
+      });
+      console.log(`[Bot/Stream] 新段 ${newSegId} 已插入 after=${prevSegId}`);
+    });
   }
 
   async onComplete(finalText) {
