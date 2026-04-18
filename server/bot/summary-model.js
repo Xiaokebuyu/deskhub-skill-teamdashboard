@@ -13,7 +13,7 @@
 
 import { client, SUMMARY_MODEL } from './anthropic-client.js';
 
-const TIMEOUT_MS = 1500;
+const TIMEOUT_MS = 4000;
 const MAX_SUMMARY_TOKENS = 50;
 
 /**

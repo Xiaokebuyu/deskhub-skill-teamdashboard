@@ -293,24 +293,39 @@ class ChatCardStreamer {
   }
 
   /**
-   * 为 round 插入思考胶囊 — **同步** enqueue 保证排在后续 stream 之前
+   * 为 round 插入思考胶囊 — 插在当前段上方（insert_before 当前 segment）
+   * 也同步登记到 _bodyElements，便于 collapse 时更新 + onComplete 时保留
    */
   ensureThinkingPillForRound(round) {
-    return this._memoize(this._pillPromises, round, () =>
-      this._enqueue(`insert thinking_pill_r${round}`, async () => {
+    return this._memoize(this._pillPromises, round, () => {
+      // 同步登记到 _bodyElements：找到当前段位置，把胶囊元素 splice 到它前面
+      const pillElement = buildThinkingPill(round)[0];   // 返回数组，取第一个
+      const targetSegId = this._currentSegmentId;
+      const targetIdx = this._bodyElements.findIndex(e => e.element_id === targetSegId);
+      if (targetIdx >= 0) {
+        this._bodyElements.splice(targetIdx, 0, pillElement);
+      } else {
+        // 兜底（不应发生）：push 到末尾
+        this._bodyElements.push(pillElement);
+      }
+      return this._enqueue(`insert thinking_pill_r${round}`, async () => {
         await this.ensureCardCreated();
-        const ok = await insertCardElements(this.cardId, buildThinkingPill(round), {
-          type: 'append',
+        const ok = await insertCardElements(this.cardId, [pillElement], {
+          type: 'insert_before',
+          targetElementId: targetSegId,
         });
         if (!ok) throw new Error(`insertCardElements(thinking_pill_r${round}) 返回 false`);
-        console.log(`[Bot/Stream] thinking_pill_r${round} 已插入`);
-      })
-    );
+        console.log(`[Bot/Stream] thinking_pill_r${round} 已插入 before=${targetSegId}`);
+      });
+    });
   }
 
   /**
    * 把某 round 的思考胶囊收起并填摘要（替代旧的 deleteThinkingPill）
-   * 两次 patch：立即先用耗时兜底 patch，再异步跑摘要模型，回来覆盖 title
+   * 双轨：
+   *   - 立即 enqueue 兜底 patch（仅含耗时），同时 mutate _bodyElements 的 pill 条目
+   *   - 异步跑摘要，回来后 enqueue 二次 patch 用摘要覆盖，同步 mutate _bodyElements
+   * 最终 onComplete 的 card.update 用 _bodyElements 重建 body，胶囊作为收起态保留
    */
   collapsePillWithSummary(round) {
     if (round === null || round === undefined) return;
@@ -325,23 +340,40 @@ class ChatCardStreamer {
     const durationSec = (Date.now() - startTs) / 1000;
     const rawThinking = this.runningThinkingByRound.get(round) || '';
 
-    // 立即 enqueue 兜底 patch（仅耗时，无摘要）— 用户立刻看到胶囊收起
+    // 先同步 mutate _bodyElements 的胶囊条目（兜底无摘要版本），保证 onComplete 时有收起态
+    this._mutatePillInBody(pillId, null, durationSec);
+
+    // 立即 enqueue 兜底 patch
     this._enqueue(`collapse pill fallback r${round}`, async () => {
-      await pillPromise;   // 等胶囊真正存在
+      await pillPromise;
       if (!capturedCardId) return;
       await patchCardElement(capturedCardId, pillId, buildPillCollapsePatch(null, durationSec));
       console.log(`[Bot/Stream] ${pillId} 已收起（兜底 duration=${durationSec.toFixed(1)}s）`);
     });
 
-    // 异步跑摘要模型（不进队列），回来后再 enqueue 覆盖 title
+    // 异步跑摘要模型
     summarizeThinking(rawThinking).then(summary => {
-      if (!summary) return;   // 失败/超时：保留兜底的"● 思考 X.Xs"
+      if (!summary) return;
+      // 同步 mutate _bodyElements（用摘要覆盖）
+      this._mutatePillInBody(pillId, summary, durationSec);
       this._enqueue(`patch pill summary r${round}`, async () => {
-        if (!capturedCardId || this.cardId !== capturedCardId) return;  // 卡片已换（极少见）
+        if (!capturedCardId || this.cardId !== capturedCardId) return;
         await patchCardElement(capturedCardId, pillId, buildPillCollapsePatch(summary, durationSec));
         console.log(`[Bot/Stream] ${pillId} 摘要已填充`);
       });
     }).catch(() => {});
+  }
+
+  /** 就地 mutate _bodyElements 中指定胶囊的 expanded + title，保 onComplete 时 card.update 带正确状态 */
+  _mutatePillInBody(pillId, summary, durationSec) {
+    const el = this._bodyElements.find(e => e.element_id === pillId);
+    if (!el) return;
+    el.expanded = false;
+    const dur = Number(durationSec).toFixed(1);
+    const title = summary ? `● 思考 ${dur}s · ${summary}` : `● 思考 ${dur}s`;
+    if (el.header && el.header.title) {
+      el.header.title.content = title;
+    }
   }
 
   // ── 节流推送 ──
