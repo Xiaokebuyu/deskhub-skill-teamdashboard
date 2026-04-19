@@ -910,6 +910,23 @@ async function handleMessage(text, chatId, userId, chatType) {
       } catch (err) {
         console.warn('[Bot] 卡片预创建失败，降级到首个 chunk 触发:', err.message);
       }
+      // 飞书偶发 bug：createCardEntity 返回 cardId 后立即 sendCardById 命中
+      // `code=230099 cardid is invalid`（服务端一致性延迟）。后台一切正常但用户收不到卡片，
+      // streamer 会继续往 orphan cardId 打 2000 次 API + 跑摘要烧 token。
+      // 规约：sendCardById 失败（messageId 为空）直接发错误卡告知 + 中止本轮，不跑 LLM。
+      if (presetCardId && !presetMessageId) {
+        console.error(`[Bot] sendCardById 失败（飞书侧一致性延迟/230099），orphan cardId=${presetCardId}，中止本轮`);
+        await createAndSendCard(receiveId, receiveIdType,
+          buildSimpleCard('飞书卡片服务暂时异常（错误在飞书侧，cardid is invalid），这一条没发出去。请稍后再发一次。', { level: 'error' }));
+        return;   // 不 new streamer，不跑 LLM，直接退出本次 task
+      }
+      if (!presetCardId) {
+        // createCardEntity 就失败了：cardId 都没有，连降级也不一定发得出。尽力一试。
+        console.error('[Bot] createCardEntity 失败，中止本轮');
+        await createAndSendCard(receiveId, receiveIdType,
+          buildSimpleCard('飞书卡片服务暂时异常（create 失败），请稍后再试。', { level: 'error' })).catch(() => {});
+        return;
+      }
       streamer = new ChatCardStreamer(receiveId, receiveIdType, {
         scene, presetCardId, presetMessageId,
       });
