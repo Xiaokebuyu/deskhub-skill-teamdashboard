@@ -451,6 +451,63 @@ async function renderKpi(body, counter) {
   };
 }
 
+// 飞书 table column.data_type 的 7 个合法值（见记忆 markup-system.md），
+// LLM 常产的别名统一映射过来。不认识的最终退 'text'，保证不会触发 column idx:N 错。
+const DATA_TYPE_ALIASES = {
+  text: 'text', string: 'text', str: 'text', bool: 'text', boolean: 'text',
+  lark_md: 'lark_md', larkmd: 'lark_md',
+  markdown: 'markdown', md: 'markdown', longtext: 'markdown', long_text: 'markdown', richtext: 'markdown',
+  number: 'number', int: 'number', integer: 'number', float: 'number', double: 'number', decimal: 'number', percent: 'number',
+  options: 'options', option: 'options', choice: 'options', choices: 'options', select: 'options', tag: 'options', tags: 'options', enum: 'options',
+  persons: 'persons', person: 'persons', user: 'persons', users: 'persons', member: 'persons', members: 'persons',
+  date: 'date', datetime: 'date', time: 'date', timestamp: 'date',
+};
+const VALID_ALIGN = new Set(['left', 'center', 'right']);
+
+/**
+ * 严规整 LLM 产的 table column：
+ *   - 缺 name 直接废（飞书 column idx:N 错的常见原因）
+ *   - data_type 走别名映射到白名单，未知退 'text'
+ *   - width 数字转 '{n}px'，非字符串非数字丢
+ *   - horizontal_align 只认 left/center/right
+ *   - format 只在 number 列保留 {symbol, precision, separator} 子集
+ *   - date_format 只在 date 列保留字符串
+ *   - 其他未知字段一律丢（飞书严校验，任何多余字段都可能触发 column idx:N 错）
+ */
+function normalizeColumn(col) {
+  if (!col || typeof col !== 'object' || !col.name) return null;
+  const out = { name: String(col.name) };
+
+  if (col.display_name != null) out.display_name = String(col.display_name);
+
+  const rawDt = typeof col.data_type === 'string' ? col.data_type.toLowerCase().trim() : '';
+  out.data_type = DATA_TYPE_ALIASES[rawDt] || 'text';
+
+  if (col.width !== undefined && col.width !== null) {
+    if (typeof col.width === 'string' && col.width) out.width = col.width;
+    else if (typeof col.width === 'number' && Number.isFinite(col.width)) out.width = `${col.width}px`;
+  }
+
+  if (typeof col.horizontal_align === 'string') {
+    const a = col.horizontal_align.toLowerCase();
+    if (VALID_ALIGN.has(a)) out.horizontal_align = a;
+  }
+
+  if (out.data_type === 'number' && col.format && typeof col.format === 'object') {
+    const fmt = {};
+    if (typeof col.format.symbol === 'string') fmt.symbol = col.format.symbol;
+    if (typeof col.format.precision === 'number') fmt.precision = col.format.precision;
+    if (typeof col.format.separator === 'boolean') fmt.separator = col.format.separator;
+    if (Object.keys(fmt).length) out.format = fmt;
+  }
+
+  if (out.data_type === 'date' && typeof col.date_format === 'string') {
+    out.date_format = col.date_format;
+  }
+
+  return out;
+}
+
 async function renderTable(body, counter) {
   if (!body || !body.trim()) {
     return blockFallback('table', counter, '（table markup 缺 body）');
@@ -466,20 +523,13 @@ async function renderTable(body, counter) {
     return blockFallback('table', counter, '（table 缺 columns）');
   }
 
-  // 飞书 table columns.width 只接受字符串（'auto' / 'weighted' / '120px'）。
-  // LLM 偶尔会产 number（踩坑见 2026-04-20 log: code=300315 expected string for width, but: 240）。
-  // 容错：number → '{n}px'；非合法字符串直接丢字段，让飞书用默认。
-  const columns = rawColumns.map(col => {
-    if (!col || typeof col !== 'object') return col;
-    const w = col.width;
-    if (w === undefined || w === null) return col;
-    if (typeof w === 'string') return col;
-    if (typeof w === 'number' && Number.isFinite(w)) {
-      return { ...col, width: `${w}px` };
-    }
-    const { width: _drop, ...rest } = col;
-    return rest;
-  });
+  const columns = rawColumns.map(normalizeColumn).filter(Boolean);
+  if (columns.length === 0) {
+    return blockFallback('table', counter, '（table columns 全部不合法）');
+  }
+  if (columns.length !== rawColumns.length) {
+    console.warn(`[Bot/Markup/Table] ${rawColumns.length - columns.length} 列因缺 name 被丢弃`);
+  }
 
   const page_size = Math.max(1, Math.min(10, Number(spec.page_size) || 5));
   const elementId = blockId('table', counter);
