@@ -5,7 +5,8 @@ import cors from 'cors';
 import deskhubProxy from './routes/proxy.js';
 import umamiProxy from './routes/umami.js';
 import workbenchRoutes from './routes/workbench.js';
-import mcpProxy from './routes/mcp.js';
+// MCP 代理暂缓：外部 DeskClaw MCP 服务（127.0.0.1:18790）未接通，删路由避免日志噪音
+// 接通外部 MCP 后把 routes/mcp.js 恢复挂载即可
 import authRoutes from './routes/auth.js';
 import mcpServer from './mcp/index.js';
 import { requireAuth } from './middleware/auth.js';
@@ -52,7 +53,7 @@ app.use(MCP_PATH, requireBearerAuth({ verifier: provider }), mcpServer);
 app.use('/api/auth', authRoutes);                    // 登录（公开）+ 用户管理（自带鉴权）
 app.use('/api/proxy/deskhub', deskhubProxy);         // 代理不需要登录（在 requireAuth 之前）
 app.use('/api/proxy/umami', umamiProxy);
-app.use('/api/proxy/mcp', mcpProxy);
+// app.use('/api/proxy/mcp', mcpProxy);   // 外部 MCP 未接通，先注释
 app.use('/api', requireAuth, workbenchRoutes);       // 工作台需登录
 
 // --- 健康检查 ---
