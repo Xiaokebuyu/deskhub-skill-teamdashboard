@@ -514,7 +514,7 @@ class ChatCardStreamer {
       } else if (part.kind === 'markup' && part.placement === 'inline') {
         this._appendToCurrentSegment(this._renderInlineSync(part.tag, part.args));
       } else if (part.kind === 'markup' && part.placement === 'block') {
-        this._handleBlockMarkup(part.tag, part.args);
+        this._handleBlockMarkup(part.tag, part.args, part.body);
       }
     }
   }
@@ -552,7 +552,7 @@ class ChatCardStreamer {
    * 处理 block markup：异步 kick off 数据拉取 + enqueue 插入 + 开新段
    * 关键：renderMarkup 立刻调用（数据 fetch 并行进行），insert 操作进队列等数据回来
    */
-  _handleBlockMarkup(tag, args) {
+  _handleBlockMarkup(tag, args, body) {
     // header markup 特殊：捕获参数但不插 body，onComplete 时用来 card.update 覆盖完成态 header
     if (tag === 'header') {
       const [title, subtitle, template] = args;
@@ -564,8 +564,8 @@ class ChatCardStreamer {
     const counter = ++this._blockMarkupCounter;
     const prevSegId = this._currentSegmentId;
 
-    // 立即 kick off 数据拉取（不进队列）
-    const renderPromise = renderMarkup(tag, args, counter);
+    // 立即 kick off 数据拉取（不进队列）—— chart/table 的 body 同步传入，不 fetch 外部
+    const renderPromise = renderMarkup(tag, args, counter, body);
 
     // 生成新段的 element_id 并先在 _segments/_bodyElements 里占位
     const newSegId = `main_text_${this._segments.length}`;

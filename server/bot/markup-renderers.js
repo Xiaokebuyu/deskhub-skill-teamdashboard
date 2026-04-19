@@ -237,6 +237,115 @@ async function renderDivider(counter) {
   };
 }
 
+// ─────────────────────────────────────────────
+//  fenced block：chart / table
+//  LLM 给简化 schema（data 是扁平数组），renderer 转成飞书 chart_spec
+// ─────────────────────────────────────────────
+
+/**
+ * 简化 chart 约定（LLM 产出）：
+ *   {
+ *     title?: string,                // 标题
+ *     aspect_ratio?: string,         // '4:3' | '16:9' | '1:1' | '2:1'，默认 '4:3'
+ *     xField?, yField?,              // line/bar/scatter 用
+ *     categoryField?, valueField?,   // pie 用
+ *     seriesField?,                  // 多系列分组用
+ *     data: [{x, y, ...}, ...]       // 扁平数组，renderer 包成 { values: [...] }
+ *   }
+ * 子类型从 args[0] 来：line / bar / pie / scatter
+ */
+async function renderChart(subType, body, counter) {
+  if (!body || !body.trim()) {
+    return blockFallback('chart', counter, '（chart markup 缺 body）');
+  }
+  let spec;
+  try {
+    spec = JSON.parse(body);
+  } catch (err) {
+    console.warn('[Bot/Markup/Chart] JSON 解析失败:', err.message, 'body=', body.slice(0, 200));
+    return blockFallback('chart', counter, `（chart JSON 格式错：${err.message}）`);
+  }
+
+  const type = (subType || 'line').toLowerCase();
+  if (!['line', 'bar', 'pie', 'scatter'].includes(type)) {
+    return blockFallback('chart', counter, `（不支持的 chart 类型：${type}）`);
+  }
+
+  const dataArr = Array.isArray(spec.data) ? spec.data : [];
+  if (dataArr.length === 0) {
+    return blockFallback('chart', counter, '（chart data 为空）');
+  }
+
+  const chart_spec = {
+    type,
+    data: { values: dataArr },
+  };
+  // 字段映射（按类型不同）
+  if (spec.xField) chart_spec.xField = spec.xField;
+  if (spec.yField) chart_spec.yField = spec.yField;
+  if (spec.categoryField) chart_spec.categoryField = spec.categoryField;
+  if (spec.valueField) chart_spec.valueField = spec.valueField;
+  if (spec.seriesField) chart_spec.seriesField = spec.seriesField;
+  if (spec.title) chart_spec.title = { text: spec.title };
+
+  const elementId = blockId('chart', counter);
+  return {
+    placement: 'block',
+    elementId,
+    elements: [{
+      tag: 'chart',
+      element_id: elementId,
+      aspect_ratio: spec.aspect_ratio || '4:3',
+      chart_spec,
+    }],
+  };
+}
+
+/**
+ * 简化 table 约定（LLM 产出）：
+ *   {
+ *     page_size?: 1-10（默认 5）,
+ *     columns: [
+ *       { name, display_name?, data_type,
+ *         width?, horizontal_align?, format?, date_format? }
+ *     ],
+ *     rows: [{col_name: value, ...}, ...]
+ *   }
+ * 基本透传到飞书 table 组件（schema 一致），加一些容错
+ */
+async function renderTable(body, counter) {
+  if (!body || !body.trim()) {
+    return blockFallback('table', counter, '（table markup 缺 body）');
+  }
+  let spec;
+  try {
+    spec = JSON.parse(body);
+  } catch (err) {
+    console.warn('[Bot/Markup/Table] JSON 解析失败:', err.message, 'body=', body.slice(0, 200));
+    return blockFallback('table', counter, `（table JSON 格式错：${err.message}）`);
+  }
+
+  const columns = Array.isArray(spec.columns) ? spec.columns : [];
+  const rows = Array.isArray(spec.rows) ? spec.rows : [];
+  if (columns.length === 0) {
+    return blockFallback('table', counter, '（table 缺 columns）');
+  }
+
+  const page_size = Math.max(1, Math.min(10, Number(spec.page_size) || 5));
+  const elementId = blockId('table', counter);
+  return {
+    placement: 'block',
+    elementId,
+    elements: [{
+      tag: 'table',
+      element_id: elementId,
+      page_size,
+      columns,
+      rows,
+    }],
+  };
+}
+
 // 统一的降级（数据缺失/ID 错）
 function blockFallback(prefix, counter, text) {
   const elementId = blockId(prefix, counter);
@@ -260,9 +369,10 @@ function blockFallback(prefix, counter, text) {
  * @param {string} tag
  * @param {string[]} args
  * @param {number} counter - 由 streamer 递增，保证 element_id 唯一
+ * @param {string} [body] - fenced 块的 body（chart/table 用），单行 markup 传 ''/undefined
  * @returns {Promise<null | { placement: 'inline', text: string } | { placement: 'block', elementId: string, elements: object[] }>}
  */
-export async function renderMarkup(tag, args, counter) {
+export async function renderMarkup(tag, args, counter, body) {
   try {
     switch (tag) {
       case 'user':    return await renderUser(args[0]);
@@ -273,6 +383,8 @@ export async function renderMarkup(tag, args, counter) {
       case 'callout': return await renderCallout(args[0], args[1], counter);
       case 'section': return await renderSection(args[0], counter);
       case 'divider': return await renderDivider(counter);
+      case 'chart':   return await renderChart(args[0], body, counter);
+      case 'table':   return await renderTable(body, counter);
       case 'header':  return null;   // Stage C 在上游直接消费，这里忽略
       default:        return null;
     }

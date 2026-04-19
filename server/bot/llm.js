@@ -131,6 +131,99 @@ Umami 时间参数是毫秒时间戳，帮用户转换自然语言时间。
   例：\`[[section:本周要点]]\`
 - \`[[divider]]\` —— 分隔线
 
+### Fenced 组件（有 body，必须 \`[[/tag]]\` 闭合，独占多行）
+
+这两个组件用来承载**结构化数据**——你自己写 JSON 作为内容。
+
+#### \`[[chart:<类型>]] ... [[/chart]]\` — 图表
+
+类型 ∈ \`line\`（折线）/ \`bar\`（柱状）/ \`pie\`（饼图）/ \`scatter\`（散点）
+
+**Body 是 JSON**，字段约定（简化版，后端帮你拼完整 spec）：
+- \`data\`: **扁平数组**，每项是一个数据点对象。**不要写 \`data.values\` 嵌套**，后端自动包
+- \`xField\` / \`yField\`: 折线 / 柱 / 散点的坐标字段名
+- \`categoryField\` / \`valueField\`: **饼图用这两个**（不是 x/yField）
+- \`seriesField\`: 多系列（多条线）分组字段
+- \`title\`: 可选标题字符串
+- \`aspect_ratio\`: 可选，\`4:3\` / \`16:9\` / \`1:1\` / \`2:1\`，默认 \`4:3\`
+
+**折线图例**：
+
+\`\`\`
+[[chart:line]]
+{"title":"本周下载","xField":"day","yField":"count","data":[
+  {"day":"周一","count":120},
+  {"day":"周二","count":145},
+  {"day":"周三","count":89}
+]}
+[[/chart]]
+\`\`\`
+
+**饼图例**（注意用 categoryField / valueField，不是 x/y）：
+
+\`\`\`
+[[chart:pie]]
+{"title":"技能占比","categoryField":"skill","valueField":"share","data":[
+  {"skill":"PPT 助手","share":340},
+  {"skill":"Reddit 扒","share":210}
+]}
+[[/chart]]
+\`\`\`
+
+**多系列折线图例**（seriesField 分组）：
+
+\`\`\`
+[[chart:line]]
+{"xField":"day","yField":"count","seriesField":"metric","data":[
+  {"day":"周一","metric":"下载","count":120},
+  {"day":"周一","metric":"安装","count":80},
+  {"day":"周二","metric":"下载","count":145},
+  {"day":"周二","metric":"安装","count":95}
+]}
+[[/chart]]
+\`\`\`
+
+#### \`[[table]] ... [[/table]]\` — 表格（和 markdown 表格的区别）
+
+用 \`[[table]]\` 是**结构化表格**（带分页、排序、富列类型）；markdown 表格是**纯文本表格**（简单展示）。方案评分对比、工单清单超 5 行等场景用 \`[[table]]\`。
+
+**Body 是 JSON**：
+- \`columns\`: 列定义数组，每项 \`{name, display_name?, data_type, width?, format?, date_format?}\`
+- \`rows\`: 行数据，每项 \`{col_name: value, ...}\` 对象（不是二维数组）
+- \`page_size\`: 可选，1-10，默认 5
+
+**data_type 可选**：
+- \`text\` / \`lark_md\`（部分 Markdown）/ \`markdown\`（完整 Markdown）
+- \`number\`（配 \`format: {symbol, precision}\`）
+- \`options\`（值是 \`[{text, color}]\` 或单字符串）
+- \`persons\`（值是 open_id 字符串或数组）
+- \`date\`（值是毫秒时间戳，配 \`date_format\`）
+
+**例**：
+
+\`\`\`
+[[table]]
+{"page_size":5,"columns":[
+  {"name":"skill","display_name":"技能","data_type":"text"},
+  {"name":"status","display_name":"状态","data_type":"options"},
+  {"name":"score","display_name":"均分","data_type":"number","format":{"precision":1}}
+],"rows":[
+  {"skill":"PPT 助手","status":[{"text":"定稿","color":"green"}],"score":8.7},
+  {"skill":"Reddit 扒","status":[{"text":"评测中","color":"orange"}],"score":7.1}
+]}
+[[/table]]
+\`\`\`
+
+**table markdown 列有一个坑**：不要用 \`![](url)\` 裸图片，飞书只认它自家 img_key，会报错。想显示链接用 \`[文字](url)\` 就行。
+
+### Fenced 的硬规则
+
+1. opening tag \`[[chart:xxx]]\` 或 \`[[table]]\` **独占一行**，后面紧接 JSON body
+2. closing tag \`[[/chart]]\` / \`[[/table]]\` **独占一行**
+3. body 是**严格 JSON**——不允许单引号、不允许注释、不允许尾逗号
+4. chart 的 \`data\` 数组**不空**，至少 1 个点，否则渲染失败
+5. chart 的 \`title\` 字段是简单字符串，不要写成对象
+
 ### 通用规范
 
 1. **有具体指代物才用**：提到某个工单就 \`[[plan:ID]]\`，不要对抽象名词用
