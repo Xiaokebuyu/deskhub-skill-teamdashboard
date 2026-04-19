@@ -113,7 +113,8 @@ export function updatePlanStatus(planId, status, result) {
 //  方案 (Variants)
 // ============================================================
 
-export function addVariant(planId, { name, uploader, desc = '', link = '', content = null, attachments = '' }) {
+export function addVariant(planId, { name, uploader, desc = '', link = '', content = null, attachments = '',
+  authorType = 'human', proxyAuthorId = null, proxyMetadata = null }) {
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
   if (!plan) throw new Error('工单不存在');
   if (plan.status === 'done') throw new Error('工单已定稿，无法添加方案');
@@ -121,15 +122,21 @@ export function addVariant(planId, { name, uploader, desc = '', link = '', conte
 
   const id = 'v' + uid();
   const attStr = typeof attachments === 'string' ? attachments : JSON.stringify(attachments);
-  db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, planId, name, uploader, desc, link, content, attStr);
+  const metaStr = proxyMetadata && typeof proxyMetadata !== 'string'
+    ? JSON.stringify(proxyMetadata) : proxyMetadata;
+
+  db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content, attachments, author_type, proxy_author_id, proxy_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, planId, name, uploader, desc, link, content, attStr, authorType, proxyAuthorId, metaStr);
 
   const v = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
-  logChange('variant', id, 'created', `工单「${plan.name}」新增方案「${name}」`, uploader, plan.priority);
+  const actorLabel = authorType === 'ai' ? `${uploader}（小合代笔）` : uploader;
+  logChange('variant', id, 'created', `工单「${plan.name}」新增方案「${name}」`, actorLabel, plan.priority);
   return {
     id: v.id, name: v.name, uploader: v.uploader,
     uploaded: fmtDate(v.uploaded_at), desc: v.description,
     link: v.link, content: v.content, attachments: parseJSON(v.attachments), scores: [],
+    authorType: v.author_type || 'human',
+    proxyAuthorId: v.proxy_author_id || null,
   };
 }
 
@@ -196,7 +203,8 @@ export function appendVariantFiles(variantId, fileEntries) {
 //  评分 (Scores)
 // ============================================================
 
-export function submitScores(variantId, { tester, scores, evalDoc }) {
+export function submitScores(variantId, { tester, scores, evalDoc,
+  authorType = 'human', proxyAuthorId = null, proxyMetadata = null }) {
   const variant = db.prepare('SELECT * FROM variants WHERE id = ?').get(variantId);
   if (!variant) throw new Error('方案不存在');
   const plan = db.prepare('SELECT status FROM plans WHERE id = ?').get(variant.plan_id);
@@ -217,12 +225,14 @@ export function submitScores(variantId, { tester, scores, evalDoc }) {
     }
   }
 
-  const insert = db.prepare(`INSERT INTO scores (id, variant_id, plan_id, tester, dim_id, value, comment, eval_doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  const metaStr = proxyMetadata && typeof proxyMetadata !== 'string'
+    ? JSON.stringify(proxyMetadata) : proxyMetadata;
+  const insert = db.prepare(`INSERT INTO scores (id, variant_id, plan_id, tester, dim_id, value, comment, eval_doc, author_type, proxy_author_id, proxy_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const created = [];
   const insertMany = db.transaction((entries) => {
     for (const s of entries) {
       const id = 's' + uid();
-      insert.run(id, variantId, variant.plan_id, tester, s.dim_id, s.value, s.comment || '', evalDoc || null);
+      insert.run(id, variantId, variant.plan_id, tester, s.dim_id, s.value, s.comment || '', evalDoc || null, authorType, proxyAuthorId, metaStr);
       created.push({ id, tester, dimId: s.dim_id, value: s.value, comment: s.comment || '', evalDoc: evalDoc || null });
     }
   });

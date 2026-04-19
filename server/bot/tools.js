@@ -1,10 +1,23 @@
 /**
  * 飞书机器人工具层
- * 9 个只读工具定义 + 执行器，复用 db-ops / proxy-ops
+ * 只读查询 + send_notification + 小合代笔写入工具（proxy_*）
+ *
+ * 代笔工具设计：
+ *   - 工具名以 proxy_ 开头：明确告诉 LLM 这是"以用户代理身份执行"，与普通 MCP 分开
+ *   - 执行时从 context.boundUser 拿 username 作为 proxyAuthorId
+ *   - db-ops 层写入时 author_type='ai' + proxy_author_id=委托者 + proxy_metadata=时间等元数据
+ *   - 前端 WoFullPanel 读取 authorType 字段渲染 AI 徽章 + 淡橙底色
+ *
+ * 硬安全：
+ *   - proxy_create_plan / proxy_edit_plan 要求 boundUser.role === 'admin'
+ *   - proxy_submit_scores / edit_score / delete_score 要求 role ∈ {admin, tester}
+ *   - activate_plan / complete_plan / reopen_plan / delete_plan / create_user / delete_user 永不授权（不定义给她）
  */
 
 import {
   listPlans, getPlanDetail, getDimensions, listUsers, getRecentChanges,
+  createPlan, editPlan, addVariant, editVariant, deleteVariant,
+  submitScores, editScore, deleteScore, appendVariantFiles,
 } from '../mcp/db-ops.js';
 import {
   listDeskhubSkills, getDeskhubSkill,
@@ -100,7 +113,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'send_notification',
-    description: '给团队成员发送飞书私聊消息。只能发给 users 表中已注册且绑定了飞书的成员。这是小合的唯一写能力。',
+    description: '给团队成员发送飞书私聊消息。只能发给 users 表中已注册且绑定了飞书的成员。用户要求时才用。',
     input_schema: {
       type: 'object',
       properties: {
@@ -108,6 +121,146 @@ export const TOOL_DEFINITIONS = [
         message: { type: 'string', description: '消息内容（支持 markdown）' },
       },
       required: ['target_username', 'message'],
+    },
+  },
+
+  // ========================================================
+  //  代笔写入工具 (proxy_*)
+  //  只在用户明确要求时才用。不允许自发判断"帮用户写"
+  //  所有写入会自动打 AI 标识（author_type='ai' + proxy_author_id=当前对话用户）
+  // ========================================================
+  {
+    name: 'proxy_create_plan',
+    description: '[代笔] 以当前用户名义创建新工单。⚠️ 仅在管理员明确要求"创建工单/建个工单/新开工单"时才用，不要自己判断"应该建个工单"。需要管理员权限。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '工单名称' },
+        type: { type: 'string', enum: ['skill', 'mcp'], description: '工单类型' },
+        priority: { type: 'string', enum: ['high', 'medium', 'low'], description: '优先级，默认 medium' },
+        desc: { type: 'string', description: '工单描述' },
+        owner: { type: 'string', description: '负责人 username' },
+        deadline: { type: 'string', description: '截止日期 YYYY-MM-DD' },
+        related_skill: { type: 'string', description: '关联技能 slug（可选）' },
+      },
+      required: ['name', 'type'],
+    },
+  },
+  {
+    name: 'proxy_edit_plan',
+    description: '[代笔] 以当前用户名义编辑工单基本信息（名称/描述/优先级/负责人/截止/关联技能）。⚠️ 仅在管理员明确要求时用。需要管理员权限。注意：状态变更（激活/定稿/重启）不在此工具，必须管理员亲自在前端操作。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string' },
+        name: { type: 'string' },
+        priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+        desc: { type: 'string' },
+        owner: { type: 'string' },
+        deadline: { type: 'string' },
+        related_skill: { type: 'string' },
+      },
+      required: ['plan_id'],
+    },
+  },
+  {
+    name: 'proxy_add_variant',
+    description: '[代笔] 以当前用户名义给工单新增方案。当用户说"帮我写个方案"、"加一个方案"时用。该方案会被标记为 AI 代笔，用户可随时删除。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string', description: '所属工单 ID' },
+        name: { type: 'string', description: '方案名称' },
+        desc: { type: 'string', description: '方案描述' },
+        link: { type: 'string', description: '外部链接（可选）' },
+        content: { type: 'string', description: 'Markdown 格式的完整方案文档（可选）' },
+      },
+      required: ['plan_id', 'name'],
+    },
+  },
+  {
+    name: 'proxy_edit_variant',
+    description: '[代笔] 编辑方案内容。⚠️ 只能编辑自己（小合）代笔过的方案，不能动真人的方案。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        variant_id: { type: 'string' },
+        name: { type: 'string' },
+        desc: { type: 'string' },
+        link: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['variant_id'],
+    },
+  },
+  {
+    name: 'proxy_delete_variant',
+    description: '[代笔] 删除方案。⚠️ 只能删自己代笔过的方案。',
+    input_schema: {
+      type: 'object',
+      properties: { variant_id: { type: 'string' } },
+      required: ['variant_id'],
+    },
+  },
+  {
+    name: 'proxy_submit_scores',
+    description: '[代笔] 以当前用户名义提交评测分数。用户说"帮我给 X 方案打分"、"记一下评测"时用。需要 tester 或 admin 权限。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        variant_id: { type: 'string', description: '方案 ID' },
+        scores: {
+          type: 'array',
+          description: '多维度评分数组',
+          items: {
+            type: 'object',
+            properties: {
+              dim_id: { type: 'string', description: '维度 ID（如 d1, d2）' },
+              value: { type: 'number', description: '分值' },
+              comment: { type: 'string', description: '评语' },
+            },
+            required: ['dim_id', 'value'],
+          },
+        },
+        evalDoc: { type: 'string', description: '整体评测文档链接（可选）' },
+      },
+      required: ['variant_id', 'scores'],
+    },
+  },
+  {
+    name: 'proxy_edit_score',
+    description: '[代笔] 编辑已提交的评分。⚠️ 只能改自己代笔过的评分。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        score_id: { type: 'string' },
+        value: { type: 'number' },
+        comment: { type: 'string' },
+        evalDoc: { type: 'string' },
+      },
+      required: ['score_id'],
+    },
+  },
+  {
+    name: 'proxy_delete_score',
+    description: '[代笔] 删除评分。⚠️ 只能删自己代笔过的评分。',
+    input_schema: {
+      type: 'object',
+      properties: { score_id: { type: 'string' } },
+      required: ['score_id'],
+    },
+  },
+  {
+    name: 'proxy_upload_file',
+    description: '[代笔] 以当前用户名义上传一个文本文件附件到方案（内容由你直接生成，比如方案细化文档 / 评测记录 / 会议纪要等 markdown）。文件会挂在目标方案的附件区，带 AI 标识。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        variant_id: { type: 'string', description: '目标方案 ID' },
+        filename: { type: 'string', description: '文件名（带扩展名，如 "方案详述.md"）' },
+        content: { type: 'string', description: '文件文本内容（通常是 markdown）' },
+      },
+      required: ['variant_id', 'filename', 'content'],
     },
   },
 ];
@@ -128,7 +281,31 @@ export function withToolsCache(tools) {
 
 // ── 工具执行器 ──
 
-export async function executeTool(name, input = {}) {
+/**
+ * 校验 boundUser 是否存在且有某角色
+ * proxy_* 工具都需要 boundUser（非绑定用户根本看不到这些工具）
+ */
+function assertProxyRole(context, ...allowed) {
+  const user = context?.boundUser;
+  if (!user) {
+    throw new Error('代笔工具需要绑定用户身份。未绑定用户不能使用。');
+  }
+  if (allowed.length && !allowed.includes(user.role)) {
+    throw new Error(`角色 ${user.role} 无权执行此代笔操作（需要 ${allowed.join('/')}）`);
+  }
+  return user;
+}
+
+/** 构造代笔 metadata，每次写入记录时刻 + 模型信息 */
+function buildProxyMetadata() {
+  return {
+    requested_at: new Date().toISOString(),
+    actor: 'xiaohe-bot',
+    model: process.env.MINIMAX_MODEL || 'MiniMax-M2.7-highspeed',
+  };
+}
+
+export async function executeTool(name, input = {}, context = {}) {
   switch (name) {
     case 'list_plans':
       return listPlans({ type: input.type, status: input.status });
@@ -185,6 +362,135 @@ export async function executeTool(name, input = {}) {
       await createAndSendCard(user.feishu_open_id, 'open_id', card);
 
       return { sent: true, target: target_username, displayName: user.display_name };
+    }
+
+    // ========================================================
+    //  代笔写入（proxy_*）
+    // ========================================================
+    case 'proxy_create_plan': {
+      const user = assertProxyRole(context, 'admin');
+      const plan = createPlan({
+        name: input.name, type: input.type,
+        priority: input.priority || 'medium',
+        desc: input.desc || '', owner: input.owner || user.username,
+        deadline: input.deadline || '', related_skill: input.related_skill || '',
+      });
+      return { ok: true, plan_id: plan.id, authorType: 'ai', proxy_author_id: user.username,
+        note: `工单已创建（小合代${user.username}创建，author_type=ai）` };
+    }
+
+    case 'proxy_edit_plan': {
+      const user = assertProxyRole(context, 'admin');
+      const { plan_id, ...fields } = input;
+      editPlan(plan_id, fields);
+      return { ok: true, plan_id, note: `工单已更新（小合代${user.username}编辑）` };
+    }
+
+    case 'proxy_add_variant': {
+      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const v = addVariant(input.plan_id, {
+        name: input.name,
+        uploader: user.username,
+        desc: input.desc || '',
+        link: input.link || '',
+        content: input.content ?? null,
+        authorType: 'ai',
+        proxyAuthorId: user.username,
+        proxyMetadata: buildProxyMetadata(),
+      });
+      return { ok: true, variant_id: v.id, authorType: 'ai',
+        note: `方案「${input.name}」已添加到工单 ${input.plan_id}（小合代${user.username}代笔）` };
+    }
+
+    case 'proxy_edit_variant': {
+      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      // 校验：仅能改自己代笔的
+      const detail = db.prepare('SELECT author_type, proxy_author_id, uploader FROM variants WHERE id = ?').get(input.variant_id);
+      if (!detail) throw new Error('方案不存在');
+      if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
+        throw new Error('只能编辑自己代笔过的方案（author_type=ai 且 proxy_author_id=你）');
+      }
+      const { variant_id, ...fields } = input;
+      editVariant(variant_id, fields);
+      return { ok: true, variant_id, note: '方案已更新' };
+    }
+
+    case 'proxy_delete_variant': {
+      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const detail = db.prepare('SELECT author_type, proxy_author_id FROM variants WHERE id = ?').get(input.variant_id);
+      if (!detail) throw new Error('方案不存在');
+      if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
+        throw new Error('只能删除自己代笔过的方案');
+      }
+      deleteVariant(input.variant_id);
+      return { ok: true, variant_id: input.variant_id, note: '方案已删除' };
+    }
+
+    case 'proxy_submit_scores': {
+      const user = assertProxyRole(context, 'admin', 'tester');
+      const result = submitScores(input.variant_id, {
+        tester: user.username,
+        scores: input.scores,
+        evalDoc: input.evalDoc,
+        authorType: 'ai',
+        proxyAuthorId: user.username,
+        proxyMetadata: buildProxyMetadata(),
+      });
+      return { ok: true, variant_id: input.variant_id, count: result?.length || input.scores.length,
+        authorType: 'ai',
+        note: `已提交 ${input.scores.length} 项评分（小合代${user.username}打分）` };
+    }
+
+    case 'proxy_edit_score': {
+      const user = assertProxyRole(context, 'admin', 'tester');
+      const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
+      if (!detail) throw new Error('评分不存在');
+      if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
+        throw new Error('只能编辑自己代笔过的评分');
+      }
+      const { score_id, ...fields } = input;
+      editScore(score_id, fields);
+      return { ok: true, score_id, note: '评分已更新' };
+    }
+
+    case 'proxy_delete_score': {
+      const user = assertProxyRole(context, 'admin', 'tester');
+      const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
+      if (!detail) throw new Error('评分不存在');
+      if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
+        throw new Error('只能删除自己代笔过的评分');
+      }
+      deleteScore(input.score_id);
+      return { ok: true, score_id: input.score_id, note: '评分已删除' };
+    }
+
+    case 'proxy_upload_file': {
+      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const { writeFileSync, mkdirSync } = await import('fs');
+      const { dirname, join } = await import('path');
+      const { fileURLToPath } = await import('url');
+      const crypto = await import('crypto');
+
+      const here = dirname(fileURLToPath(import.meta.url));
+      const UPLOAD_DIR = process.env.UPLOAD_DIR || join(here, '..', 'uploads');
+      const EVAL_DIR = join(UPLOAD_DIR, 'eval');
+      mkdirSync(EVAL_DIR, { recursive: true });
+
+      const safeName = (input.filename || 'note.md').replace(/[^\p{L}\p{N}._-]/gu, '_').slice(0, 128);
+      const diskName = `${crypto.randomUUID().slice(0, 8)}-${safeName}`;
+      const diskPath = join(EVAL_DIR, diskName);
+      const buf = Buffer.from(input.content || '', 'utf8');
+      if (buf.length === 0) throw new Error('文件内容为空');
+      if (buf.length > 10 * 1024 * 1024) throw new Error('文件超过 10MB');
+      writeFileSync(diskPath, buf);
+
+      const merged = appendVariantFiles(input.variant_id, [{
+        path: `uploads/eval/${diskName}`,
+        originalName: input.filename,
+        size: buf.length,
+      }]);
+      return { ok: true, variant_id: input.variant_id, filename: input.filename,
+        note: `文件已上传到方案 ${input.variant_id}，当前该方案共 ${merged.length} 个附件（小合代${user.username}上传）` };
     }
 
     default:
