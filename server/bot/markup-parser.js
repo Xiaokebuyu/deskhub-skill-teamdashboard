@@ -42,12 +42,13 @@ export const TAG_PLACEMENT = {
   header:   'block',    // Stage C 上游消费，renderer 侧忽略
   chart:    'block',    // fenced
   table:    'block',    // fenced
+  kpi:      'block',    // fenced（KPI 并列卡，基于飞书 column_set）
 };
 
 const VALID_TAGS = Object.keys(TAG_PLACEMENT);
 
 // ── fenced 白名单（有 body 的组件）──
-export const FENCED_TAGS = new Set(['chart', 'table']);
+export const FENCED_TAGS = new Set(['chart', 'table', 'kpi']);
 
 // ── 尺寸约束 ──
 const MAX_PENDING    = 200;   // 未闭合 `[[` 的最大耐心（单行）

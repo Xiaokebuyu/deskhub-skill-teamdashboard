@@ -386,6 +386,139 @@ export function buildTableProbeA_AllTypes() {
   };
 }
 
+// ============================================================
+//  column_set 探测卡（KPI 并列卡候选 schema）
+// ============================================================
+
+/**
+ * 候选 A：column_set 标准（每个 column 放 plain_text 大数字 + 小标签）
+ * 假设 schema：{tag: 'column_set', columns: [{tag: 'column', elements: [...]}]}
+ */
+export function buildColumnSetProbeA() {
+  const makeKpi = (value, label, color = 'indigo') => ({
+    tag: 'column',
+    width: 'weighted',
+    weight: 1,
+    vertical_align: 'center',
+    elements: [
+      { tag: 'markdown', text_align: 'center', content: `<font color='${color}' size='heading'>${value}</font>` },
+      { tag: 'markdown', text_align: 'center', content: `<font color='grey' size='notation'>${label}</font>` },
+    ],
+  });
+  return {
+    schema: '2.0',
+    config: { update_multi: true, width_mode: 'fill' },
+    header: {
+      title: { tag: 'plain_text', content: '🔬 Column Set A — KPI 并列' },
+      subtitle: { tag: 'plain_text', content: '假设 column 里塞 markdown' },
+      icon: { tag: 'standard_icon', token: 'search_outlined', color: 'indigo' },
+      template: 'default',
+    },
+    body: {
+      elements: [
+        { tag: 'markdown', content: '**本周概况**' },
+        {
+          tag: 'column_set',
+          flex_mode: 'none',
+          horizontal_spacing: 'default',
+          background_style: 'default',
+          columns: [
+            makeKpi('5', '接单', 'indigo'),
+            makeKpi('7.8', '均分', 'orange'),
+            makeKpi('2', '待定稿', 'red'),
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * 候选 B：column 里用 plain_text（更纯粹）+ 带背景色
+ */
+export function buildColumnSetProbeB() {
+  const makeKpi = (value, label) => ({
+    tag: 'column',
+    width: 'weighted',
+    weight: 1,
+    elements: [
+      { tag: 'plain_text', content: value, text_align: 'center', text_size: 'heading' },
+      { tag: 'plain_text', content: label, text_align: 'center', text_size: 'notation', text_color: 'grey' },
+    ],
+  });
+  return {
+    schema: '2.0',
+    config: { update_multi: true, width_mode: 'fill' },
+    header: {
+      title: { tag: 'plain_text', content: '🔬 Column Set B — plain_text 版' },
+      subtitle: { tag: 'plain_text', content: '对比 A：不使用 markdown' },
+      icon: { tag: 'standard_icon', token: 'search_outlined', color: 'orange' },
+      template: 'default',
+    },
+    body: {
+      elements: [
+        {
+          tag: 'column_set',
+          flex_mode: 'none',
+          background_style: 'grey',
+          columns: [
+            makeKpi('12', '今日接单'),
+            makeKpi('¥8.5万', '营收'),
+            makeKpi('+23%', '环比'),
+            makeKpi('98%', '完成率'),
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * 候选 C：flex_mode 测试（stretch / none / flow）
+ */
+export function buildColumnSetProbeC() {
+  const col = (label, value) => ({
+    tag: 'column',
+    width: 'weighted',
+    weight: 1,
+    elements: [
+      { tag: 'plain_text', content: label, text_align: 'center', text_size: 'notation', text_color: 'grey' },
+      { tag: 'plain_text', content: value, text_align: 'center', text_size: 'heading' },
+    ],
+  });
+  return {
+    schema: '2.0',
+    config: { update_multi: true, width_mode: 'fill' },
+    header: {
+      title: { tag: 'plain_text', content: '🔬 Column Set C — 3 种 flex_mode' },
+      subtitle: { tag: 'plain_text', content: '观察布局差异' },
+      icon: { tag: 'standard_icon', token: 'search_outlined', color: 'violet' },
+      template: 'default',
+    },
+    body: {
+      elements: [
+        { tag: 'markdown', content: '**flex_mode: none**（默认）' },
+        {
+          tag: 'column_set', flex_mode: 'none',
+          columns: [col('A', '1'), col('B', '2'), col('C', '3')],
+        },
+        { tag: 'hr' },
+        { tag: 'markdown', content: '**flex_mode: stretch**' },
+        {
+          tag: 'column_set', flex_mode: 'stretch',
+          columns: [col('A', '1'), col('B', '2'), col('C', '3')],
+        },
+        { tag: 'hr' },
+        { tag: 'markdown', content: '**flex_mode: flow**' },
+        {
+          tag: 'column_set', flex_mode: 'flow',
+          columns: [col('A', '1'), col('B', '2'), col('C', '3'), col('D', '4'), col('E', '5')],
+        },
+      ],
+    },
+  };
+}
+
 /**
  * 分页测试：12 行 + page_size=5
  */

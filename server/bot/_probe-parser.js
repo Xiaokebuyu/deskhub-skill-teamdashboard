@@ -326,6 +326,19 @@ function assertEq(label, got, expected) {
   assertEq('全部当文本', texts, '[[foo:x]]body[[/foo]]');
 }
 
+// ── 场景 22b：kpi fenced ──
+{
+  console.log('\n[case 22b] kpi fenced');
+  const s = new MarkupStream();
+  const parts = s.feed('[[kpi]]{"items":[{"label":"接单","value":"5"}]}[[/kpi]]');
+  assertEq('kpi fenced', parts, [
+    {
+      kind: 'markup', tag: 'kpi', args: [], placement: 'block',
+      body: '{"items":[{"label":"接单","value":"5"}]}',
+    },
+  ]);
+}
+
 // ── 场景 22：孤立 [[/plan]] 在 normal 模式当文本 ──
 {
   console.log('\n[case 22] 孤立闭合 tag');

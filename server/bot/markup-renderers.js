@@ -326,6 +326,74 @@ async function renderChart(subType, body, counter) {
  *   }
  * 基本透传到飞书 table 组件（schema 一致），加一些容错
  */
+/**
+ * KPI 并列卡（基于飞书 column_set）
+ * LLM 产出简化 schema：
+ *   {
+ *     items: [
+ *       { label: string, value: string, color?: 'indigo'|'orange'|'grey'|'red'|'green'|...',
+ *         hint?: string }    // hint 可选，比 label 更小的一行附注（如"环比 +12%"）
+ *     ]
+ *   }
+ * 默认 color=indigo。items 1-6 个；超 6 会显得挤，renderer 不拦但效果差。
+ */
+async function renderKpi(body, counter) {
+  if (!body || !body.trim()) {
+    return blockFallback('kpi', counter, '（kpi markup 缺 body）');
+  }
+  let spec;
+  try {
+    spec = JSON.parse(body);
+  } catch (err) {
+    console.warn('[Bot/Markup/Kpi] JSON 解析失败:', err.message, 'body=', body.slice(0, 200));
+    return blockFallback('kpi', counter, `（kpi JSON 格式错：${err.message}）`);
+  }
+
+  const items = Array.isArray(spec.items) ? spec.items : [];
+  if (items.length === 0) {
+    return blockFallback('kpi', counter, '（kpi items 为空）');
+  }
+
+  const columns = items.map(it => {
+    const color = it.color || 'indigo';
+    const elements = [
+      // 大数字
+      { tag: 'markdown', text_align: 'center',
+        content: `<font color='${color}' size='heading'>${it.value ?? ''}</font>` },
+      // 小标签
+      { tag: 'markdown', text_align: 'center',
+        content: `<font color='grey' size='notation'>${it.label ?? ''}</font>` },
+    ];
+    // hint 可选，额外加一行更小的附注
+    if (it.hint) {
+      elements.push({
+        tag: 'markdown', text_align: 'center',
+        content: `<font color='grey' size='notation'>${it.hint}</font>`,
+      });
+    }
+    return {
+      tag: 'column',
+      width: 'weighted',
+      weight: 1,
+      vertical_align: 'center',
+      elements,
+    };
+  });
+
+  const elementId = blockId('kpi', counter);
+  return {
+    placement: 'block',
+    elementId,
+    elements: [{
+      tag: 'column_set',
+      element_id: elementId,
+      flex_mode: 'none',
+      horizontal_spacing: 'default',
+      columns,
+    }],
+  };
+}
+
 async function renderTable(body, counter) {
   if (!body || !body.trim()) {
     return blockFallback('table', counter, '（table markup 缺 body）');
@@ -398,6 +466,7 @@ export async function renderMarkup(tag, args, counter, body) {
       case 'divider': return await renderDivider(counter);
       case 'chart':   return await renderChart(args[0], body, counter);
       case 'table':   return await renderTable(body, counter);
+      case 'kpi':     return await renderKpi(body, counter);
       case 'header':  return null;   // Stage C 在上游直接消费，这里忽略
       default:        return null;
     }

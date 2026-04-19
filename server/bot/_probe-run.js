@@ -30,11 +30,14 @@ import {
   CHART_PATCH_FULL_REPLACEMENT,
   buildTableProbeA_AllTypes,
   buildTableProbeB_Pagination,
+  buildColumnSetProbeA,
+  buildColumnSetProbeB,
+  buildColumnSetProbeC,
 } from './_probe-chart-table.js';
 
 const VALID_TARGETS = [
   'icons', 'colors', 'templates',
-  'charts', 'tables', 'chart-patch',
+  'charts', 'tables', 'chart-patch', 'columns',
   'all',
 ];
 
@@ -117,6 +120,11 @@ async function main() {
   if (target === 'tables' || target === 'all') {
     await send(buildTableProbeA_AllTypes(),     'Table A · 7 种列类型');
     await send(buildTableProbeB_Pagination(),   'Table B · 分页（12 行/页 5）');
+  }
+  if (target === 'columns' || target === 'all') {
+    await send(buildColumnSetProbeA(),          'Column A · KPI markdown 大数字');
+    await send(buildColumnSetProbeB(),          'Column B · plain_text + 灰底');
+    await send(buildColumnSetProbeC(),          'Column C · 3 种 flex_mode');
   }
   if (target === 'chart-patch') {
     // 先发初始卡片（3 个数据点），2 秒后 patchCardElement 把数据替换为 5 个点
