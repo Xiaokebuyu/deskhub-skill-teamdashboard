@@ -23,6 +23,7 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
   // 构建 Accordion items — 纯展示，无表单
   const accordionItems = wo.variants.map(v => {
     const avg = avgScore(v, activeDims);
+    const isAI = v.authorType === 'ai';
 
     return {
       key: v.id,
@@ -30,6 +31,7 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
           <div>
             <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text }}>{v.name}</span>
+            {isAI && <AIBadge title={`小合代 ${v.proxyAuthorId || v.uploader} 代笔`} />}
             <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginLeft: GAP.md }}>
               {v.uploader} · {v.uploaded}
             </span>
@@ -40,7 +42,13 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
         </div>
       ),
       content: (
-        <div>
+        <div style={isAI ? {
+          background: 'rgba(184,92,26,0.05)',
+          borderLeft: '3px solid #b85c1a',
+          borderRadius: '0 6px 6px 0',
+          padding: `${GAP.base}px ${GAP.lg}px`,
+          margin: `0 0 0 -${GAP.lg}px`,
+        } : undefined}>
           {/* 方案说明 */}
           {v.desc && (
             <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2, lineHeight: 1.6, marginBottom: GAP.lg }}>
@@ -142,7 +150,10 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
                   padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.03)",
                   fontSize: FONT_SIZE.md, fontFamily: FONT_SANS,
                 }}>
-                  <span style={{ color: COLOR.text, fontWeight: 500, minWidth: 36 }}>{record.tester}</span>
+                  <span style={{ color: COLOR.text, fontWeight: 500, minWidth: 36, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {record.tester}
+                    {record.authorType === 'ai' && <AIBadge tiny title={`小合代 ${record.proxyAuthorId || record.tester} 打分`} />}
+                  </span>
                   <span style={{ color: COLOR.sub, minWidth: 40 }}>{record.date}</span>
                   <div style={{ display: "flex", gap: GAP.md, flexWrap: "wrap", flex: 1 }}>
                     {record.dims.map(ds => (
@@ -383,8 +394,13 @@ const previewMdComponents = {
 function groupScoresByTester(scores, activeDims) {
   const groups = {};
   scores.forEach(s => {
-    const key = `${s.tester}-${s.date}`;
-    if (!groups[key]) groups[key] = { tester: s.tester, date: s.date, comment: s.comment || "", evalDocs: [], dims: [], scoreIds: [] };
+    const key = `${s.tester}-${s.date}-${s.authorType || 'human'}`;   // AI 和真人同日分开
+    if (!groups[key]) groups[key] = {
+      tester: s.tester, date: s.date,
+      comment: s.comment || "", evalDocs: [], dims: [], scoreIds: [],
+      authorType: s.authorType || 'human',
+      proxyAuthorId: s.proxyAuthorId || null,
+    };
     const dim = activeDims.find(d => d.id === s.dimId);
     if (dim) groups[key].dims.push({ dimId: s.dimId, dimName: dim.name, value: s.value, max: dim.max });
     if (s.id) groups[key].scoreIds.push(s.id);
@@ -404,4 +420,28 @@ function parseEvalDocs(raw) {
     if (Array.isArray(parsed)) return parsed.filter(d => d.content);
   } catch { /* not JSON */ }
   return [];
+}
+
+/** 小合代笔徽章 — 橙棕风格 + 小螃蟹 */
+function AIBadge({ tiny = false, title = "小合代笔" }) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 2,
+        marginLeft: tiny ? 4 : 8,
+        padding: tiny ? "0 4px" : "1px 6px",
+        fontSize: tiny ? 10 : 11,
+        fontFamily: FONT_MONO,
+        color: "#b85c1a",
+        background: "rgba(184,92,26,0.12)",
+        border: "1px solid rgba(184,92,26,0.3)",
+        borderRadius: 3,
+        lineHeight: 1.4,
+        userSelect: "none",
+      }}
+    >
+      🦀 AI
+    </span>
+  );
 }
