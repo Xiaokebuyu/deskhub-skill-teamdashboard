@@ -299,10 +299,12 @@ router.post('/variants/:variantId/scores', requireRole('admin', 'tester'), (req,
     const lockMsg = checkPlanNotDone(variant.plan_id);
     if (lockMsg) return res.status(403).json({ error: lockMsg });
 
-    const { tester, scores, evalDoc } = req.body;
-    if (!tester || !Array.isArray(scores) || scores.length === 0) {
-      return res.status(400).json({ error: 'tester 和 scores[] 必填' });
+    const { scores, evalDoc } = req.body;
+    if (!Array.isArray(scores) || scores.length === 0) {
+      return res.status(400).json({ error: 'scores[] 必填' });
     }
+    // REST 请求永远是真人，tester 强制用 JWT 里的 username，不信任 body
+    const tester = req.user;
 
     // 校验评分上限
     const dimsMap = {};
