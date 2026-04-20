@@ -28,7 +28,7 @@ export default function PageHeader({ num, title, titleEm, desc }) {
         letterSpacing: 2.5,
         textTransform: "uppercase",
         marginBottom: 14,
-        textShadow: "0 1px 8px rgba(0,0,0,0.5), 0 0 2px rgba(0,0,0,0.4)",
+        // 无 text-shadow —— 深色暗阴影叠在浅文字上会糊成一圈光晕
       }}>{num}</div>
       <div style={{
         fontFamily: FONT_SERIF,
@@ -50,7 +50,7 @@ export default function PageHeader({ num, title, titleEm, desc }) {
         marginTop: 18,
         lineHeight: 1.65,
         maxWidth: 620,
-        textShadow: "0 1px 8px rgba(0,0,0,0.45), 0 0 2px rgba(0,0,0,0.35)",
+        // 跟 title 对齐：靠文字本身 + 页面 vignette wash 撑对比度，不再加 shadow
       }}>{desc}</div>}
     </div>
   );
