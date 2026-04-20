@@ -266,10 +266,12 @@ router.delete('/variants/:id', requireRole('admin', 'tester', 'member'), (req, r
       if (variant.uploader !== req.user) {
         return res.status(403).json({ error: '只能删除自己的方案' });
       }
-      // 未评分校验
-      const scoreCount = db.prepare('SELECT COUNT(*) AS n FROM scores WHERE variant_id = ?').get(id).n;
-      if (scoreCount > 0) {
-        return res.status(403).json({ error: '方案已有评分，无法删除' });
+      // 仅保护他人评分，自己（含代笔）的自评不阻拦 —— 随 variant 一并级联删
+      const otherScoreCount = db.prepare(
+        'SELECT COUNT(*) AS n FROM scores WHERE variant_id = ? AND tester != ?'
+      ).get(id, req.user).n;
+      if (otherScoreCount > 0) {
+        return res.status(403).json({ error: '方案已有他人评分，无法删除' });
       }
     }
 
