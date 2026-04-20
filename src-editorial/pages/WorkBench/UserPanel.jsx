@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { X, Trash2, Copy, Check, RefreshCw } from "lucide-react";
+import { Trash2, Copy, Check } from "lucide-react";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { ROLES } from "../../constants/roles.js";
 import { FInput, FSelect } from "../../components/ui/Form.jsx";
+import SheetModal, { SheetCloseBtn } from "../../components/ui/SheetModal.jsx";
 import { fetchUsers, createUser, deleteUser } from "../../services/workService.js";
 
 const CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -20,8 +21,6 @@ const roleOpts = [
  * Tab 2: 创建用户 + 随机密码 + 一键复制
  */
 export default function UserPanel({ show, onClose, token, currentUserId }) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
   const [tab, setTab] = useState("list");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -41,20 +40,13 @@ export default function UserPanel({ show, onClose, token, currentUserId }) {
 
   useEffect(() => {
     if (show) {
-      setMounted(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
       loadUsers();
       setTab("list");
       setError("");
       setCreatedUser(null);
-    } else if (mounted) {
-      setVisible(false);
-      const t = setTimeout(() => {
-        setMounted(false);
-        setDeleteTarget(null);
-        setCreatedUser(null);
-      }, 400);
-      return () => clearTimeout(t);
+    } else {
+      setDeleteTarget(null);
+      setCreatedUser(null);
     }
   }, [show]);
 
@@ -114,46 +106,21 @@ export default function UserPanel({ show, onClose, token, currentUserId }) {
     }
   };
 
-  if (!mounted) return null;
-
   const roleInfo = (id) => ROLES.find(r => r.id === id) || {};
 
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 800,
-      background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      opacity: visible ? 1 : 0, transition: "opacity 0.3s",
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: 480, maxHeight: "85vh",
-        background: COLOR.gradModal,
-        border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-        boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-        overflow: "hidden", display: "flex", flexDirection: "column",
-        transform: visible ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
-        transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
+    <SheetModal show={show} onClose={onClose} width={480}>
+      {/* 标题栏 + tab */}
+      <div style={{
+        padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`,
+        borderBottom: `1px solid ${COLOR.border}`, flexShrink: 0,
       }}>
-        {/* 标题栏 + tab */}
-        <div style={{
-          padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`,
-          borderBottom: `1px solid ${COLOR.border}`, flexShrink: 0,
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.base }}>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
-              用户管理
-            </div>
-            <div onClick={onClose} style={{
-              width: 28, height: 28, borderRadius: 7,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
-            }}
-              onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
-              onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
-            >
-              <X size={14} color={COLOR.text5} strokeWidth={1.5} />
-            </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.base }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
+            用户管理
           </div>
+          <SheetCloseBtn onClick={onClose} />
+        </div>
           <div style={{ display: "flex", gap: GAP.lg }}>
             {[["list", "用户列表"], ["create", "创建用户"]].map(([k, l]) => (
               <div key={k} onClick={() => { setTab(k); setError(""); setCreatedUser(null); }} style={{
@@ -341,7 +308,6 @@ export default function UserPanel({ show, onClose, token, currentUserId }) {
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </SheetModal>
   );
 }

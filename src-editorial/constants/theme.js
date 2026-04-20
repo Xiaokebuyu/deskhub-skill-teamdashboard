@@ -147,6 +147,28 @@ export const PANEL = {
   transition: "all 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
 };
 
+// SheetModal —— 业务表单/设置类弹窗（ScorePanel / VariantManager / DocReader / UserPanel / 维度设置 / ChangePassword / 新建工单）
+// 比 MODAL 重（上面叠在 FullPanel 之上），但不做 Container Transform 展开 —— "凭空弹"语义
+// 层级设计：MODAL(600) < PANEL(700) < SHEET(800) < 预留顶层 confirm(900)
+export const SHEET = {
+  zIndex: 800,
+  overlay: "rgba(20,20,15,0.42)",   // 介于 MODAL 0.32 和 PANEL 0.58 之间
+  blur: "blur(4px)",
+  bg: COLOR.gradModal,
+  radius: 16,
+  border: "1px solid rgba(0,0,0,0.1)",
+  shadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
+  scaleHidden: "scale(0.88) translateY(24px)",
+  scaleVisible: "scale(1) translateY(0)",
+  transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
+  fadeMs: 300,
+  // 关闭按钮样式（所有 sheet 头部 X 按钮复用）
+  closeBtnSize: 28,
+  closeBtnRadius: 7,
+  closeBtnBg: "rgba(39,26,0,0.05)",
+  closeBtnBgHover: "rgba(39,26,0,0.10)",
+};
+
 // Browse page
 export const BROWSE = {
   backRadius: 999,        // pill button (Perplexity 风)

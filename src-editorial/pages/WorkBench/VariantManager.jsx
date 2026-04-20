@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from "react";
-import { X, Upload, File, Trash2, ChevronDown } from "lucide-react";
-import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE, MODAL } from "../../constants/theme.js";
+import { useState, useRef } from "react";
+import { X, Upload, File, ChevronDown } from "lucide-react";
+import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import { FInput, FBtn } from "../../components/ui/Form.jsx";
 import MarkdownInput from "../../components/ui/MarkdownInput.jsx";
 import Accordion from "../../components/ui/Accordion.jsx";
+import SheetModal, { SheetCloseBtn } from "../../components/ui/SheetModal.jsx";
 import { uploadFiles } from "../../services/workService.js";
 
 /**
@@ -11,25 +12,11 @@ import { uploadFiles } from "../../services/workService.js";
  * 手风琴展开 → 编辑名称/描述/链接/文档/附件 → 保存/删除
  */
 export default function VariantManager({ show, onClose, wo, role, user, token, onEditVariant, onDeleteVariant, dims }) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
   const [expandedVar, setExpandedVar] = useState(null);
   const [editState, setEditState] = useState({});
   const fileInputRef = useRef(null);
   const activeFileVar = useRef(null);
 
-  useEffect(() => {
-    if (show) {
-      setMounted(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
-    } else if (mounted) {
-      setVisible(false);
-      const t = setTimeout(() => setMounted(false), 400);
-      return () => clearTimeout(t);
-    }
-  }, [show]);
-
-  if (!mounted) return null;
   if (!wo) return null;
 
   const isDone = wo.status === "done";
@@ -302,68 +289,43 @@ export default function VariantManager({ show, onClose, wo, role, user, token, o
   });
 
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 800,
-      background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      opacity: visible ? 1 : 0,
-      transition: "opacity 0.3s",
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: 480, maxHeight: "85vh",
-        background: COLOR.gradModal,
-        border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-        boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-        overflow: "hidden", display: "flex", flexDirection: "column",
-        transform: visible ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
-        transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
+    <SheetModal show={show} onClose={onClose} width={480}>
+      {/* Title bar */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
+        flexShrink: 0,
       }}>
-        {/* Title bar */}
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
-          flexShrink: 0,
-        }}>
-          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>方案管理</div>
-          <div onClick={onClose} style={{
-            width: 28, height: 28, borderRadius: 7,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
-            onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
-          >
-            <X size={14} color={COLOR.text5} strokeWidth={1.5} />
-          </div>
-        </div>
-
-        {/* Content */}
-        <div style={{ flex: 1, overflow: "auto", padding: `${GAP.base}px 0` }}>
-          {filteredVariants.length === 0 ? (
-            <div style={{
-              padding: `${GAP.xxl}px`, textAlign: "center",
-              fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.sub,
-            }}>
-              {role === "admin" ? "暂无方案" : "暂无你提交的方案"}
-            </div>
-          ) : (
-            <Accordion
-              items={accordionItems}
-              expandedKey={expandedVar}
-              onToggle={handleToggle}
-            />
-          )}
-        </div>
-
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          style={{ display: "none" }}
-          onChange={handleFileChange}
-        />
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>方案管理</div>
+        <SheetCloseBtn onClick={onClose} />
       </div>
-    </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflow: "auto", padding: `${GAP.base}px 0` }}>
+        {filteredVariants.length === 0 ? (
+          <div style={{
+            padding: `${GAP.xxl}px`, textAlign: "center",
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.sub,
+          }}>
+            {role === "admin" ? "暂无方案" : "暂无你提交的方案"}
+          </div>
+        ) : (
+          <Accordion
+            items={accordionItems}
+            expandedKey={expandedVar}
+            onToggle={handleToggle}
+          />
+        )}
+      </div>
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
+    </SheetModal>
   );
 }

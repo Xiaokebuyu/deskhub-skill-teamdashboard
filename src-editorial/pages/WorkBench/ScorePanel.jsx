@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { X, Plus, Trash2, FileText, Pencil } from "lucide-react";
+import { Plus, Trash2, FileText, Pencil } from "lucide-react";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
 import StarRate from "../../components/ui/StarRate.jsx";
 import { FInput } from "../../components/ui/Form.jsx";
 import MarkdownInput from "../../components/ui/MarkdownInput.jsx";
+import SheetModal, { SheetCloseBtn } from "../../components/ui/SheetModal.jsx";
 import { td } from "../../utils/helpers.js";
 
 /**
@@ -12,8 +13,6 @@ import { td } from "../../utils/helpers.js";
  * 支持编辑模式 (editData) + 历史评分管理
  */
 export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, editData, onEditScore, onDeleteScore, role, user }) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
   const [tab, setTab] = useState("new"); // "new" | "history"
   const [selVarId, setSelVarId] = useState(null);
   const [scores, setScores] = useState({});
@@ -24,35 +23,28 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, ed
 
   const activeDims = (dims || []).filter(d => d.active);
 
+  // 打开瞬间按 editData 预填表单
   useEffect(() => {
-    if (show) {
-      setMounted(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
-      // Pre-fill from editData (from WoFullPanel inline edit button)
-      if (editData) {
-        setTab("new");
-        setSelVarId(editData.variantId);
-        setTester(editData.tester || user || "");
-        setEditingScoreIds(editData.scores || null);
-        const preScores = {};
-        (editData.dims || []).forEach(d => { preScores[d.dimId] = d.value; });
-        setScores(preScores);
-      } else {
-        setTab("new");
-        setTester(user || "");
-        setEditingScoreIds(null);
-      }
-    } else if (mounted) {
-      setVisible(false);
-      const t = setTimeout(() => {
-        setMounted(false);
-        setEditingScoreIds(null);
-      }, 400);
-      return () => clearTimeout(t);
+    if (!show) {
+      // 关闭后清 editing 态（延迟到动画结束后由 SheetModal 卸载内容）
+      setEditingScoreIds(null);
+      return;
+    }
+    if (editData) {
+      setTab("new");
+      setSelVarId(editData.variantId);
+      setTester(editData.tester || user || "");
+      setEditingScoreIds(editData.scores || null);
+      const preScores = {};
+      (editData.dims || []).forEach(d => { preScores[d.dimId] = d.value; });
+      setScores(preScores);
+    } else {
+      setTab("new");
+      setTester(user || "");
+      setEditingScoreIds(null);
     }
   }, [show]);
 
-  if (!mounted) return null;
   if (!wo) return null;
 
   const allFilled = selVarId && tester.trim() && activeDims.every(d => scores[d.id] > 0);
@@ -109,22 +101,7 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, ed
   };
 
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 800,
-      background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      opacity: visible ? 1 : 0,
-      transition: "opacity 0.3s",
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: 480, maxHeight: "85vh",
-        background: COLOR.gradModal,
-        border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-        boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-        overflow: "hidden", display: "flex", flexDirection: "column",
-        transform: visible ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
-        transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
-      }}>
+    <SheetModal show={show} onClose={onClose} width={480}>
         {/* 标题栏 + tab 切换 */}
         <div style={{
           padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
@@ -134,16 +111,7 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, ed
             <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
               {editingScoreIds ? "编辑评分" : "评测打分"}
             </div>
-            <div onClick={onClose} style={{
-              width: 28, height: 28, borderRadius: 7,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", background: COLOR.borderLt, transition: "background 0.15s",
-            }}
-              onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
-              onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
-            >
-              <X size={14} color={COLOR.text5} strokeWidth={1.5} />
-            </div>
+            <SheetCloseBtn onClick={onClose} />
           </div>
           {!editingScoreIds && (
             <div style={{ display: "flex", gap: GAP.lg }}>
@@ -313,8 +281,7 @@ export default function ScorePanel({ show, onClose, wo, dims, onSubmitScores, ed
           }}>{editingScoreIds ? "保存修改" : "提交评测"}</button>
         </div>
         )}
-      </div>
-    </div>
+    </SheetModal>
   );
 }
 

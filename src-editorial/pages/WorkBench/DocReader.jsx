@@ -1,75 +1,31 @@
-import { useState, useEffect } from "react";
 import Markdown from "react-markdown";
-import { X } from "lucide-react";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../constants/theme.js";
+import SheetModal, { SheetCloseBtn } from "../../components/ui/SheetModal.jsx";
 
 /**
- * 文档阅读器弹窗 — z-index 800，和 formUI 同款动画
- * 渲染 markdown 格式的方案文档内容
+ * 文档阅读器弹窗 — 渲染 markdown 格式的方案文档内容
  */
 export default function DocReader({ show, onClose, title, content }) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (show) {
-      setMounted(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
-    } else if (mounted) {
-      setVisible(false);
-      const t = setTimeout(() => setMounted(false), 400);
-      return () => clearTimeout(t);
-    }
-  }, [show]);
-
-  if (!mounted) return null;
-
+  const width = typeof window !== "undefined" ? Math.min(680, window.innerWidth * 0.9) : 680;
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 800,
-      background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      opacity: visible ? 1 : 0,
-      transition: "opacity 0.3s",
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: Math.min(680, window.innerWidth * 0.9),
-        maxHeight: "85vh",
-        background: COLOR.gradModal,
-        border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-        boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-        overflow: "hidden", display: "flex", flexDirection: "column",
-        transform: visible ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
-        transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
+    <SheetModal show={show} onClose={onClose} width={width}>
+      {/* 标题栏 */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
+        flexShrink: 0,
       }}>
-        {/* 标题栏 */}
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`,
-          flexShrink: 0,
-        }}>
-          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xl, color: COLOR.text, fontWeight: 500 }}>
-            {title || "方案文档"}
-          </div>
-          <div onClick={onClose} style={{
-            width: 28, height: 28, borderRadius: 7,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", background: COLOR.borderLt,
-            transition: "background 0.15s",
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = COLOR.borderMd}
-            onMouseLeave={e => e.currentTarget.style.background = COLOR.borderLt}
-          >
-            <X size={14} color={COLOR.text5} strokeWidth={1.5} />
-          </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xl, color: COLOR.text, fontWeight: 500 }}>
+          {title || "方案文档"}
         </div>
-
-        {/* 文档内容 */}
-        <div style={{ flex: 1, overflow: "auto", padding: `${GAP.xl}px 24px 24px` }}>
-          <Markdown components={mdComponents}>{content || ""}</Markdown>
-        </div>
+        <SheetCloseBtn onClick={onClose} />
       </div>
-    </div>
+
+      {/* 文档内容 */}
+      <div style={{ flex: 1, overflow: "auto", padding: `${GAP.xl}px 24px 24px` }}>
+        <Markdown components={mdComponents}>{content || ""}</Markdown>
+      </div>
+    </SheetModal>
   );
 }
 

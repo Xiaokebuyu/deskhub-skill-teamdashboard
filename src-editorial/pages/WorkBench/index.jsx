@@ -17,6 +17,7 @@ import WoFullPanel from "./WoFullPanel.jsx";
 import DocReader from "./DocReader.jsx";
 import ScorePanel from "./ScorePanel.jsx";
 import VariantManager from "./VariantManager.jsx";
+import SheetModal, { SheetCloseBtn } from "../../components/ui/SheetModal.jsx";
 import useWorkOrders from "./useWorkOrders.js";
 import * as workApi from "../../services/workService.js";
 
@@ -167,14 +168,15 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
   const openVarMgr = () => setShowVarMgr(true);
   const closeVarMgr = () => setShowVarMgr(false);
 
-  // 表单操作 — mount 后下一帧再展开，确保入场动画生效
+  // 表单操作 — 动画交给 SheetModal 内部，外部只管开关 showForm
   const openForm = (mode, data) => {
     setFMode(mode);
     setFData(data);
-    requestAnimationFrame(() => requestAnimationFrame(() => setShowForm(true)));
+    setShowForm(true);
   };
   const closeForm = () => {
     setShowForm(false);
+    // fData/fMode 保留到 SheetModal 淡出结束，避免内容在动画中闪变
     setTimeout(() => { setFMode(null); setFData({}); }, 400);
   };
 
@@ -277,28 +279,13 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
     const titles = { create: "新建工单", addVar: "添加方案", complete: "定稿" };
 
     return (
-      <div onClick={closeForm} style={{
-        position: "fixed", inset: 0, zIndex: 800,
-        background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        opacity: showForm ? 1 : 0, transition: "opacity 0.3s",
-        pointerEvents: showForm ? "auto" : "none",
-      }}>
-        <div onClick={e => e.stopPropagation()} style={{
-          width: fMode === "create" ? 440 : fMode === "complete" ? 400 : 460,
-          maxHeight: "85vh", display: "flex", flexDirection: "column",
-          background: COLOR.gradModal,
-          border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-          boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-          overflow: "hidden",
-          transform: showForm ? "scale(1) translateY(0)" : "scale(0.88) translateY(24px)",
-          transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
-        }}>
+      <SheetModal show={showForm} onClose={closeForm} width={fMode === "create" ? 440 : fMode === "complete" ? 400 : 460}>
           {/* 标题栏 */}
-          <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}` }}>
+          <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>
               {titles[fMode]}
             </div>
+            <SheetCloseBtn onClick={closeForm} />
           </div>
 
           {/* 表单内容 */}
@@ -461,8 +448,7 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
               border: `1px solid ${COLOR.btn}`, transition: "all 0.15s",
             }}>{fMode === "create" ? "创建" : fMode === "addVar" ? "添加" : "确认定稿"}</button>
           </div>
-        </div>
-      </div>
+      </SheetModal>
     );
   }
 
@@ -591,52 +577,36 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
         onEditVariant={(planId, variantId, data) => ops.editVariant(planId, variantId, data)}
         onDeleteVariant={(planId, variantId) => ops.deleteVariant(planId, variantId)} />}
 
-      {/* 维度管理 — z-800 弹窗，带展开/收起动画 */}
-      {showDimMgr && (
-        <div onClick={() => setShowDimMgr(false)} style={{
-          position: "fixed", inset: 0, zIndex: 800,
-          background: "rgba(0,0,0,0.35)", backdropFilter: "blur(3px)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          opacity: showDimMgr ? 1 : 0, transition: "opacity 0.3s",
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            width: 360,
-            background: COLOR.gradModal,
-            border: "1px solid rgba(0,0,0,0.1)", borderRadius: 16,
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-            overflow: "hidden",
-            transform: "scale(1) translateY(0)",
-            transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
-          }}>
-            <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}` }}>
-              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>评分维度设置</div>
-            </div>
-            <div style={{ padding: `${GAP.lg}px ${GAP.xxl}px`, maxHeight: "60vh", overflow: "auto" }}>
-              {dims.map(d => (
-                <div key={d.id} style={{ padding: `${GAP.base}px 0`, borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45, transition: "opacity 0.15s" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.sm }}>
-                    <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text, background: "transparent", border: "none", borderBottom: `1px dashed ${COLOR.borderMd}`, outline: "none", padding: "0 0 2px", width: 100 }} />
-                    <div style={{ display: "flex", gap: GAP.sm, alignItems: "center" }}>
-                      <button onClick={() => toggleDim(d.id)} style={{ padding: `3px ${GAP.base}px`, borderRadius: 6, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, border: d.active ? "1px solid rgba(74,138,74,0.3)" : `1px solid ${COLOR.border}`, background: d.active ? "rgba(74,138,74,0.1)" : COLOR.borderLt, color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用" : "禁用"}</button>
-                      <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.error }}>删除</button>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: GAP.sm }}>
-                    <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: "#9a8a68" }}>满分</span>
-                    {[3, 5, 10].map(n => (
-                      <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: `2px ${GAP.md}px`, borderRadius: 5, cursor: "pointer", fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : `1px solid ${COLOR.border}`, background: d.max === n ? COLOR.borderMd : "transparent", color: COLOR.text2, transition: "all 0.15s" }}>{n}</button>
-                    ))}
-                  </div>
+      {/* 维度管理 */}
+      <SheetModal show={showDimMgr} onClose={() => setShowDimMgr(false)} width={360}>
+        <div style={{ padding: `${GAP.xl}px ${GAP.xxl}px ${GAP.lg}px`, borderBottom: `1px solid ${COLOR.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxl, fontWeight: 600, color: COLOR.text }}>评分维度设置</div>
+          <SheetCloseBtn onClick={() => setShowDimMgr(false)} />
+        </div>
+        <div style={{ padding: `${GAP.lg}px ${GAP.xxl}px`, maxHeight: "60vh", overflow: "auto" }}>
+          {dims.map(d => (
+            <div key={d.id} style={{ padding: `${GAP.base}px 0`, borderBottom: "1px solid rgba(0,0,0,0.05)", opacity: d.active ? 1 : 0.45, transition: "opacity 0.15s" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: GAP.sm }}>
+                <input value={d.name} onChange={e => editDim(d.id, "name", e.target.value)} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.text, background: "transparent", border: "none", borderBottom: `1px dashed ${COLOR.borderMd}`, outline: "none", padding: "0 0 2px", width: 100 }} />
+                <div style={{ display: "flex", gap: GAP.sm, alignItems: "center" }}>
+                  <button onClick={() => toggleDim(d.id)} style={{ padding: `3px ${GAP.base}px`, borderRadius: 6, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, border: d.active ? "1px solid rgba(74,138,74,0.3)" : `1px solid ${COLOR.border}`, background: d.active ? "rgba(74,138,74,0.1)" : COLOR.borderLt, color: d.active ? "#4a8a4a" : "#a89a78", transition: "all 0.15s" }}>{d.active ? "启用" : "禁用"}</button>
+                  <button onClick={() => delDim(d.id)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.error }}>删除</button>
                 </div>
-              ))}
-              <div style={{ display: "flex", gap: GAP.md, marginTop: 14 }}>
-                <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: `${GAP.md}px ${GAP.lg}px`, background: "rgba(0,0,0,0.02)", border: `1px solid ${COLOR.border}`, borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, outline: "none" }} />
-                <button onClick={addDim} style={{ padding: `${GAP.md}px ${GAP.xl}px`, borderRadius: GAP.md, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500, background: COLOR.btn, color: COLOR.btnText, border: `1px solid ${COLOR.btn}`, transition: "all 0.15s" }}>添加</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: GAP.sm }}>
+                <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: "#9a8a68" }}>满分</span>
+                {[3, 5, 10].map(n => (
+                  <button key={n} onClick={() => editDim(d.id, "max", n)} style={{ padding: `2px ${GAP.md}px`, borderRadius: 5, cursor: "pointer", fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, border: d.max === n ? "1px solid rgba(0,0,0,0.15)" : `1px solid ${COLOR.border}`, background: d.max === n ? COLOR.borderMd : "transparent", color: COLOR.text2, transition: "all 0.15s" }}>{n}</button>
+                ))}
               </div>
             </div>
+          ))}
+          <div style={{ display: "flex", gap: GAP.md, marginTop: 14 }}>
+            <input value={newDim} onChange={e => setNewDim(e.target.value)} placeholder="新维度名称" style={{ flex: 1, padding: `${GAP.md}px ${GAP.lg}px`, background: "rgba(0,0,0,0.02)", border: `1px solid ${COLOR.border}`, borderRadius: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, outline: "none" }} />
+            <button onClick={addDim} style={{ padding: `${GAP.md}px ${GAP.xl}px`, borderRadius: GAP.md, cursor: "pointer", fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500, background: COLOR.btn, color: COLOR.btnText, border: `1px solid ${COLOR.btn}`, transition: "all 0.15s" }}>添加</button>
           </div>
         </div>
-      )}
+      </SheetModal>
     </div>
   );
 }
