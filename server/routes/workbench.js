@@ -195,15 +195,15 @@ router.post('/plans/:planId/variants', requireRole('admin', 'tester', 'member'),
     const lockMsg = checkPlanNotDone(planId);
     if (lockMsg) return res.status(403).json({ error: lockMsg });
 
-    const { name, uploader, desc = '', link = '', content = null, attachments = '' } = req.body;
-    if (!name || !uploader) return res.status(400).json({ error: 'name 和 uploader 必填' });
+    const { name, desc = '', link = '', content = null, attachments = '' } = req.body;
+    if (!name) return res.status(400).json({ error: 'name 必填' });
 
     const id = 'v' + uid();
     const attStr = typeof attachments === 'string' ? attachments : JSON.stringify(attachments);
-    // 注：走 REST API 的请求永远是真人（author_type 走 DEFAULT 'human'）
+    // 走 REST API 的请求永远是真人：uploader 强制用 JWT 里的 username，不信任 body
     // 小合代笔走直接 db-ops 调用，在 server/mcp/db-ops.js 里注入 AI 字段
     db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, planId, name, uploader, desc, link, content, attStr);
+      .run(id, planId, name, req.user, desc, link, content, attStr);
 
     const v = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
     res.status(201).json(local({
