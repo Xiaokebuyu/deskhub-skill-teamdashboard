@@ -69,12 +69,50 @@ if (process.env.NODE_ENV === 'production' && existsSync(distPath)) {
   });
 }
 
+// --- Express 错误兜底（所有路由之后）---
+app.use((err, req, res, _next) => {
+  console.error('[express/error]', req.method, req.path, err);
+  if (res.headersSent) {
+    res.destroy(err);
+    return;
+  }
+  res.status(500).json({ error: '服务器内部错误' });
+});
+
+// --- 进程级异常兜底 ---
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal/unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[fatal/uncaughtException]', err);
+  process.exit(1);
+});
+
 // --- 飞书 LLM 机器人 ---
 import { startBot } from './bot/index.js';
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[server] DeskSkill API running on http://localhost:${PORT}`);
   console.log(`[server] MCP endpoint: http://localhost:${PORT}${MCP_PATH}`);
   console.log(`[server] OAuth issuer: ${issuerUrl.href}`);
   startBot().catch(err => console.error('[Bot] 启动失败:', err));
 });
+
+// --- Graceful shutdown ---
+let shuttingDown = false;
+const shutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, closing HTTP server...`);
+  server.closeIdleConnections?.();
+  server.close(() => {
+    console.log('[shutdown] HTTP server closed');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.error('[shutdown] forced exit after 30s');
+    process.exit(1);
+  }, 30_000).unref();
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
