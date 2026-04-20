@@ -16,7 +16,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { provider, handleLogin, ensureClientMiddleware } from './mcp/oauth-provider.js';
 
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,6 +31,8 @@ app.use(express.urlencoded({ extended: false }));  // OAuth 登录表单
 
 // --- 静态文件（公开，不需要登录）---
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, 'uploads');
+// 预创建 multer dest 目录（干净部署首次上传不 ENOENT）。recursive 幂等安全。
+mkdirSync(join(UPLOAD_DIR, 'eval'), { recursive: true });
 app.use('/api/uploads', express.static(UPLOAD_DIR));
 
 // --- MCP OAuth 认证服务器（根级，处理 /.well-known, /authorize, /token, /register）---
