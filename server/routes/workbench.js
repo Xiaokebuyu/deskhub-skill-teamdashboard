@@ -37,8 +37,9 @@ router.get('/plans', (req, res) => {
     const { type, status } = req.query;
     let where = [];
     let params = {};
-    if (type) { where.push('p.type = $type'); params.$type = type; }
-    if (status) { where.push('p.status = $status'); params.$status = status; }
+    // better-sqlite3 绑定 named params 时 key 不含 $ 前缀（SQL 里保留 $）
+    if (type) { where.push('p.type = $type'); params.type = type; }
+    if (status) { where.push('p.status = $status'); params.status = status; }
     const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const plans = db.prepare(`SELECT * FROM plans p ${clause} ORDER BY p.created_at DESC`).all(params);
