@@ -10,31 +10,37 @@ let sessionId = null;
 
 /** MCP JSON-RPC 请求 */
 async function mcpCall(method, params = {}, id = Date.now()) {
-  // 如果没有 session，先 initialize
-  if (!sessionId) await initSession();
+  // 400 = session 过期，重置后最多重试 2 次（原递归实现无上限，上游持续 400 会栈爆）
+  let attempts = 0;
+  let currentId = id;
+  while (true) {
+    if (!sessionId) await initSession();
 
-  const res = await fetch(MCP_URL(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-      'Mcp-Session-Id': sessionId,
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', method, params, id }),
-  });
+    const res = await fetch(MCP_URL(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Mcp-Session-Id': sessionId,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: currentId }),
+    });
 
-  // session 过期，重新初始化
-  if (!res.ok && res.status === 400) {
-    sessionId = null;
-    await initSession();
-    return mcpCall(method, params, id + 1);
+    if (!res.ok && res.status === 400) {
+      if (attempts++ < 2) {
+        sessionId = null;
+        currentId++;
+        continue;
+      }
+      throw new Error(`MCP 持续返 400（已重试 ${attempts} 次）`);
+    }
+
+    const text = await res.text();
+    // 解析 SSE 格式：找到 "data: {...}" 行
+    const dataLine = text.split('\n').find(l => l.startsWith('data: '));
+    if (!dataLine) throw new Error('Invalid MCP response');
+    return JSON.parse(dataLine.slice(6));
   }
-
-  const text = await res.text();
-  // 解析 SSE 格式：找到 "data: {...}" 行
-  const dataLine = text.split('\n').find(l => l.startsWith('data: '));
-  if (!dataLine) throw new Error('Invalid MCP response');
-  return JSON.parse(dataLine.slice(6));
 }
 
 /** 初始化 MCP session */

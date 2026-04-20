@@ -213,28 +213,36 @@ async function initDeskclawSession() {
 }
 
 async function deskclawCall(method, params = {}, id = Date.now()) {
-  if (!deskclawSessionId) await initDeskclawSession();
+  // 400 = session 过期，重置后最多重试 2 次（原递归实现无上限，上游持续 400 会栈爆）
+  let attempts = 0;
+  let currentId = id;
+  while (true) {
+    if (!deskclawSessionId) await initDeskclawSession();
 
-  const res = await fetch(MCP_URL(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-      'Mcp-Session-Id': deskclawSessionId,
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', method, params, id }),
-  });
+    const res = await fetch(MCP_URL(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Mcp-Session-Id': deskclawSessionId,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: currentId }),
+    });
 
-  if (!res.ok && res.status === 400) {
-    deskclawSessionId = null;
-    await initDeskclawSession();
-    return deskclawCall(method, params, id + 1);
+    if (!res.ok && res.status === 400) {
+      if (attempts++ < 2) {
+        deskclawSessionId = null;
+        currentId++;
+        continue;
+      }
+      throw new Error(`DeskClaw MCP 持续返 400（已重试 ${attempts} 次）`);
+    }
+
+    const text = await res.text();
+    const dataLine = text.split('\n').find(l => l.startsWith('data: '));
+    if (!dataLine) throw new Error('Invalid DeskClaw MCP response');
+    return JSON.parse(dataLine.slice(6));
   }
-
-  const text = await res.text();
-  const dataLine = text.split('\n').find(l => l.startsWith('data: '));
-  if (!dataLine) throw new Error('Invalid DeskClaw MCP response');
-  return JSON.parse(dataLine.slice(6));
 }
 
 export async function listDeskclawTools() {
