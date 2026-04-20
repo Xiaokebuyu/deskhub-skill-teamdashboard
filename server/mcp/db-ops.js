@@ -76,7 +76,9 @@ export function editPlan(planId, fields) {
   if (plan) logChange('plan', planId, 'updated', `编辑工单「${plan.name}」`, '', plan.priority);
 }
 
-export function deletePlan(planId) {
+// 手动 DELETE 作为双保险：schema 已有 ON DELETE CASCADE + foreign_keys=ON，
+// 但万一 pragma 被关，显式三条 DELETE 仍能保证无孤儿。事务化防中途失败。
+const deletePlanTx = db.transaction((planId) => {
   const plan = db.prepare('SELECT name, priority, owner FROM plans WHERE id = ?').get(planId);
   const vids = db.prepare('SELECT id FROM variants WHERE plan_id = ?').all(planId).map(v => v.id);
   if (vids.length > 0) {
@@ -84,6 +86,12 @@ export function deletePlan(planId) {
   }
   db.prepare('DELETE FROM variants WHERE plan_id = ?').run(planId);
   db.prepare('DELETE FROM plans WHERE id = ?').run(planId);
+  return plan;
+});
+
+export function deletePlan(planId) {
+  const plan = deletePlanTx(planId);
+  // logChange 必须在事务外：内部 bus.emit 同步派发，事务内派发的话监听者查不到已提交数据
   if (plan) logChange('plan', planId, 'deleted', `删除工单「${plan.name}」`, '', plan.priority);
 }
 

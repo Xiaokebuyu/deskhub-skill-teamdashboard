@@ -6,6 +6,7 @@ import { dirname, join } from 'path';
 import db from '../db/init.js';
 import { wrapResponse } from '../utils/meta.js';
 import { requireRole } from '../middleware/auth.js';
+import { deletePlan } from '../mcp/db-ops.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, '..', 'uploads');
@@ -167,13 +168,7 @@ router.patch('/plans/:id/status', requireRole('admin'), (req, res) => {
 // --- DELETE /api/plans/:id ---
 router.delete('/plans/:id', requireRole('admin'), (req, res) => {
   try {
-    // 级联删除 scores → variants → plan（FK CASCADE 处理 variants→scores）
-    const vids = db.prepare('SELECT id FROM variants WHERE plan_id = ?').all(req.params.id).map(v => v.id);
-    if (vids.length > 0) {
-      db.prepare(`DELETE FROM scores WHERE variant_id IN (${vids.map(() => '?').join(',')})`).run(...vids);
-    }
-    db.prepare('DELETE FROM variants WHERE plan_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM plans WHERE id = ?').run(req.params.id);
+    deletePlan(req.params.id);
     res.json(local({ ok: true }));
   } catch (err) {
     console.error('[plans/delete]', err.message);
