@@ -398,6 +398,52 @@ export function bindFeishuUser(username, password, openId) {
 }
 
 // ============================================================
+//  ability 权限（R2）
+// ============================================================
+
+/** 查 user × ability 是否已授权（同步，better-sqlite3 prepare 缓存） */
+export function hasPermission(username, ability) {
+  if (!username || !ability) return false;
+  const row = db.prepare(
+    'SELECT 1 FROM permissions WHERE user_id = ? AND ability = ?'
+  ).get(username, ability);
+  return !!row;
+}
+
+/** 授权（幂等：已存在则更新 granted_by/granted_at） */
+export function grantPermission(username, ability, grantedBy = '') {
+  db.prepare(`
+    INSERT INTO permissions (user_id, ability, granted_by)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id, ability) DO UPDATE SET
+      granted_by = excluded.granted_by,
+      granted_at = datetime('now')
+  `).run(username, ability, grantedBy);
+}
+
+/** 撤销（不存在无副作用） */
+export function revokePermission(username, ability) {
+  const info = db.prepare(
+    'DELETE FROM permissions WHERE user_id = ? AND ability = ?'
+  ).run(username, ability);
+  return info.changes > 0;
+}
+
+/** 查某用户已授权的 ability 列表 */
+export function listUserPermissions(username) {
+  return db.prepare(
+    'SELECT ability, granted_at, granted_by FROM permissions WHERE user_id = ? ORDER BY ability'
+  ).all(username);
+}
+
+/** 查所有授权记录（管理员总览用） */
+export function listAllPermissionGrants() {
+  return db.prepare(
+    'SELECT user_id, ability, granted_at, granted_by FROM permissions ORDER BY user_id, ability'
+  ).all();
+}
+
+// ============================================================
 //  归属查询（供权限检查用）
 // ============================================================
 
