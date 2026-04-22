@@ -450,7 +450,8 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
       thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET },
       interleaved: true,
       // 注入 boundUser + chatContext（openId 等）给 proxy_* 和 send_file_to_user 工具
-      executeTool: (name, input) => executeTool(name, input, { boundUser, chatContext }),
+      // opts 由 agent-loop 的 runToolWithTimeout 传入（含 signal），合并进 context 透传
+      executeTool: (name, input, opts = {}) => executeTool(name, input, { boundUser, chatContext, ...opts }),
 
       onTextChunk: (delta, round) => emit({ type: 'text_chunk', delta, round }),
       onThinkingChunk: (delta, round) => emit({ type: 'thinking_chunk', delta, round }),

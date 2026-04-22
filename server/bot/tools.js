@@ -504,6 +504,12 @@ const HTTP_TOOL_NAMES = new Set([
 function classifyError(err, toolName) {
   const msg = err?.message || String(err);
   const code = err?.code || '';
+  const name = err?.name || '';
+
+  // AbortError（fetch 被 agent-loop 的 AbortController 取消）→ 视同 timeout，可重试
+  if (name === 'AbortError' || code === 'ABORT_ERR') {
+    return { category: 'timeout', retryable: true };
+  }
 
   // SQLite 错误
   if (typeof code === 'string' && code.startsWith('SQLITE_')) {
@@ -579,11 +585,11 @@ async function runToolInternal(name, input, context) {
       const query = {};
       if (input.search) query.search = input.search;
       if (input.limit) query.limit = String(input.limit);
-      return listDeskhubSkills(query);
+      return listDeskhubSkills(query, { signal: context?.signal });
     }
 
     case 'get_deskhub_skill':
-      return getDeskhubSkill(input.slug);
+      return getDeskhubSkill(input.slug, { signal: context?.signal });
 
     case 'get_umami_stats':
       return getUmamiStats(input.start_at, input.end_at);
@@ -932,7 +938,7 @@ async function runToolInternal(name, input, context) {
     case 'get_deskhub_skill_file': {
       const { slug, path } = input;
       if (!slug || !path) throw new Error('slug 和 path 必填');
-      const result = await fetchDeskhubFile(slug, path);
+      const result = await fetchDeskhubFile(slug, path, { signal: context?.signal });
       return {
         slug, path,
         filename: result.filename,

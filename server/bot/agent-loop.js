@@ -24,18 +24,26 @@ function extractText(content) {
   return content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 }
 
-/** executeTool 加 timeout 保护。超时抛 Error（code='TOOL_TIMEOUT'） */
+/**
+ * executeTool 加 timeout 保护 + AbortController
+ * - 超时不仅 reject wait，还会 abort 底层 fetch（DeskHub / Umami / 飞书 / Anthropic 等）
+ *   真正释放资源，而不是让请求在后台跑完
+ * - 若 executeTool 不接受 signal（历史调用方），fallback 退化为单纯 Promise.race
+ * - 超时抛 Error（code='TOOL_TIMEOUT'），agent-loop 外层 classify 为 timeout+retryable
+ */
 function runToolWithTimeout(executeTool, name, input, timeoutMs) {
+  const controller = new AbortController();
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
     timer = setTimeout(() => {
+      controller.abort();
       const err = new Error(`工具 ${name} 执行超过 ${timeoutMs}ms 未返回`);
       err.code = 'TOOL_TIMEOUT';
       reject(err);
     }, timeoutMs);
   });
   return Promise.race([
-    Promise.resolve().then(() => executeTool(name, input)),
+    Promise.resolve().then(() => executeTool(name, input, { signal: controller.signal })),
     timeoutPromise,
   ]).finally(() => clearTimeout(timer));
 }
