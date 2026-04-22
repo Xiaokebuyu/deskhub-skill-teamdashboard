@@ -74,15 +74,19 @@ export function deadlineBadge(deadline, status) {
   if (!deadline) return { text: "", color: "", bg: "", daysLeft: null };
   if (status === "done") return { text: "", color: "", bg: "", daysLeft: null };
 
-  // 按北京时间 endOfDay 计算剩余天数：deadline 当天 23:59+08 之前算"当天"
+  // 按北京时间 endOfDay 计算剩余天数：deadline 当天 23:59+08 之前算"当天"。
+  // 逾期与剩余分支独立算，避免 ceil/floor 单函数覆盖不全导致边界偏 1 天。
   const endOfDay = new Date(`${deadline}T23:59:59+08:00`).getTime();
   const now = Date.now();
   const msPerDay = 24 * 3600 * 1000;
-  const daysLeft = Math.ceil((endOfDay - now) / msPerDay);
+  const diffMs = endOfDay - now;
 
-  if (daysLeft < 0) {
-    return { text: `已逾期 ${-daysLeft} 天`, color: "#b83a2a", bg: "rgba(184,58,42,0.10)", daysLeft };
+  if (diffMs < 0) {
+    const overdue = Math.ceil(-diffMs / msPerDay);
+    return { text: `已逾期 ${overdue} 天`, color: "#b83a2a", bg: "rgba(184,58,42,0.10)", daysLeft: -overdue };
   }
+  const daysLeft = Math.floor(diffMs / msPerDay);
+
   if (daysLeft === 0) {
     return { text: "今日到期", color: "#b83a2a", bg: "rgba(184,58,42,0.08)", daysLeft };
   }
