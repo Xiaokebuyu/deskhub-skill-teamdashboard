@@ -36,14 +36,16 @@ async function withLock(key, fn) {
   const prev = lockMap.get(key) || Promise.resolve();
   let release;
   const next = new Promise(r => { release = r; });
-  lockMap.set(key, prev.then(() => next));
+  // 保留 chain 的引用以便 GC 判断——旧实现用 next.then(()=>{}) 每次返回新 Promise，
+  // 比较永不命中，lockMap 永不 shrink，长期跑下来内存泄漏（key 随 openId 线性增长）。
+  const chain = prev.then(() => next);
+  lockMap.set(key, chain);
   try {
     await prev;
     return await fn();
   } finally {
     release();
-    // 清空 lock 链（如果自己是最后一个）
-    if (lockMap.get(key) === next.then(() => {})) lockMap.delete(key);
+    if (lockMap.get(key) === chain) lockMap.delete(key);
   }
 }
 
@@ -66,28 +68,35 @@ async function writeIndex(idx) {
   await fs.writeFile(INDEX_PATH, JSON.stringify(idx, null, 2), 'utf8');
 }
 
+const INDEX_LOCK_KEY = '__index__';
+
 /**
  * 解析 openId → 实际存储 key（username 或 anon-openId）
  * boundUser 存在则优先用 username，否则 fallback openId
  * 副作用：更新 _index.json 的 lastSeen + username
+ *
+ * 用 INDEX_LOCK_KEY 全局串化 read-modify-write：并发 chat 的多个 resolveKey
+ * 交错执行会丢失部分 openId 映射，极端情况 writeFile 交错破坏 JSON。
  */
 async function resolveKey(openId, boundUser) {
-  const idx = await readIndex();
-  const prev = idx[openId] || {};
-  const username = boundUser?.username || prev.username || null;
+  return withLock(INDEX_LOCK_KEY, async () => {
+    const idx = await readIndex();
+    const prev = idx[openId] || {};
+    const username = boundUser?.username || prev.username || null;
 
-  idx[openId] = {
-    ...prev,
-    ...(username ? { username } : {}),
-    lastSeen: new Date().toISOString(),
-  };
-  await writeIndex(idx);
+    idx[openId] = {
+      ...prev,
+      ...(username ? { username } : {}),
+      lastSeen: new Date().toISOString(),
+    };
+    await writeIndex(idx);
 
-  return {
-    key: username ? `user-${username}` : `anon-${openId}`,
-    isAnon: !username,
-    username,
-  };
+    return {
+      key: username ? `user-${username}` : `anon-${openId}`,
+      isAnon: !username,
+      username,
+    };
+  });
 }
 
 function pathOf(key) {
@@ -261,7 +270,9 @@ export function upsertSection(content, { section, body, segment = 'public' }) {
   const target = segs[segment] || '';
   const sectionHeader = `### ${section}`;
 
-  const re = new RegExp(`(^|\\n)${escapeRegex(sectionHeader)}[^\\n]*\\n[\\s\\S]*?(?=\\n### |$)`, 'm');
+  // 不能带 'm' flag：m 下 $ 匹配每行末尾，non-greedy 会在第一行末就 stop，
+  // 导致 update 已有多行段落时只替换第一行。无 m 时 $ = 字符串末尾，(^|\n) 已处理首行边界。
+  const re = new RegExp(`(^|\\n)${escapeRegex(sectionHeader)}[^\\n]*\\n[\\s\\S]*?(?=\\n### |$)`);
   const newSection = `${sectionHeader}\n${body.trim()}`;
 
   let updatedTarget;
@@ -277,7 +288,8 @@ export function upsertSection(content, { section, body, segment = 'public' }) {
 export function removeSection(content, { section }) {
   const segs = parseSegments(content);
   const sectionHeader = `### ${section}`;
-  const re = new RegExp(`(^|\\n)${escapeRegex(sectionHeader)}[^\\n]*\\n[\\s\\S]*?(?=\\n### |$)`, 'mg');
+  // 保留 g flag 以便 replace 扫描两个 segment 的所有命中；去掉 m 原因同 upsertSection
+  const re = new RegExp(`(^|\\n)${escapeRegex(sectionHeader)}[^\\n]*\\n[\\s\\S]*?(?=\\n### |$)`, 'g');
 
   const stripped = {
     public: (segs.public || '').replace(re, '').trim(),
@@ -296,10 +308,11 @@ export function appendNote(content, { note, segment = 'public' }) {
   const target = segs[segment] || '';
 
   const notesHeader = '### 笔记';
-  const re = new RegExp(`${escapeRegex(notesHeader)}\\n([\\s\\S]*?)(?=\\n### |$)`, 'm');
+  // 同样不带 'm' flag：否则 body 捕获只到第一行，每次追加都会丢失历史笔记
+  const re = new RegExp(`(^|\\n)${escapeRegex(notesHeader)}\\n([\\s\\S]*?)(?=\\n### |$)`);
   let updatedTarget;
   if (re.test(target)) {
-    updatedTarget = target.replace(re, (match, body) => `${notesHeader}\n${body.trim()}\n${line}`);
+    updatedTarget = target.replace(re, (_m, pre, body) => `${pre}${notesHeader}\n${body.trim()}\n${line}`);
   } else {
     updatedTarget = target.trim() ? `${target.trim()}\n\n${notesHeader}\n${line}` : `${notesHeader}\n${line}`;
   }
@@ -317,12 +330,25 @@ function escapeRegex(s) {
 /**
  * 绑定成功时把 anon-{openId}.md 迁移成 user-{username}.md
  * 若两者都存在则合并（anon 的内容 append 到 user 的对应段末尾）
+ *
+ * 幂等：写入 merged 内容时带 `<!-- migrated_from: anon-xxx -->` 标记，
+ * 若 unlink 失败、下次重试看到同标记就跳过合并，避免画像重复。
  */
 export async function migrateAnonToUser(openId, username) {
   const anonKey = `anon-${openId}`;
   const userKey = `user-${username}`;
   const anonPath = pathOf(anonKey);
   const userPath = pathOf(userKey);
+  const migrateMarker = `<!-- migrated_from: ${anonKey} -->`;
+
+  // 同一把锁覆盖 index read-modify-write + user 文件写入
+  async function updateIndex() {
+    await withLock(INDEX_LOCK_KEY, async () => {
+      const idx = await readIndex();
+      idx[openId] = { ...(idx[openId] || {}), username, lastSeen: new Date().toISOString() };
+      await writeIndex(idx);
+    });
+  }
 
   let anonContent = '';
   let userContent = '';
@@ -332,17 +358,21 @@ export async function migrateAnonToUser(openId, username) {
   catch (err) { if (err.code !== 'ENOENT') throw err; }
 
   if (!anonContent) {
-    // anon 不存在，更新 _index.json 即可
-    const idx = await readIndex();
-    idx[openId] = { ...(idx[openId] || {}), username, lastSeen: new Date().toISOString() };
-    await writeIndex(idx);
+    await updateIndex();
     return { migrated: false, reason: 'no anon memory' };
+  }
+
+  // 若 user 文件里已有本次迁移标记 → 先前合并过，anon 文件是残留，直接 unlink
+  if (userContent.includes(migrateMarker)) {
+    await fs.unlink(anonPath).catch(err => console.warn('[Memory] 清理残留 anon 失败:', err.message));
+    await updateIndex();
+    return { migrated: false, reason: 'already merged' };
   }
 
   // 合并策略：anon 的 Public/Private 分别 append 到 user 对应段
   const aSeg = parseSegments(anonContent);
   const uSeg = parseSegments(userContent);
-  const merged = composeSegments({
+  const merged = migrateMarker + '\n' + composeSegments({
     public: [uSeg.public, aSeg.public].filter(Boolean).join('\n\n'),
     private: [uSeg.private, aSeg.private].filter(Boolean).join('\n\n'),
   });
@@ -350,11 +380,9 @@ export async function migrateAnonToUser(openId, username) {
   await withLock(userKey, async () => {
     await fs.writeFile(userPath, merged, 'utf8');
   });
-  await fs.unlink(anonPath).catch(() => {});
+  await fs.unlink(anonPath).catch(err => console.warn('[Memory] unlink anon 失败（已带幂等标记，下次启动会清理）:', err.message));
 
-  const idx = await readIndex();
-  idx[openId] = { ...(idx[openId] || {}), username, lastSeen: new Date().toISOString() };
-  await writeIndex(idx);
+  await updateIndex();
 
   return { migrated: true, from: anonPath, to: userPath };
 }
