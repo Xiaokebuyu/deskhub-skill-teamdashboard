@@ -5,6 +5,7 @@
  */
 
 import { getCache, setCache, clearAll } from '../middleware/cache.js';
+import { createMcpRpc } from './mcp-rpc.js';
 
 // ============================================================
 //  DeskHub
@@ -12,32 +13,32 @@ import { getCache, setCache, clearAll } from '../middleware/cache.js';
 
 const DESKHUB_BASE = () => process.env.DESKHUB_BASE || 'https://skills.deskclaw.me';
 
-async function fetchDeskhub(path) {
+async function fetchDeskhub(path, { signal } = {}) {
   const url = `${DESKHUB_BASE()}${path}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal });
   if (!res.ok) throw new Error(`DeskHub ${res.status}: ${url}`);
   return res.json();
 }
 
-export async function listDeskhubSkills(query = {}) {
+export async function listDeskhubSkills(query = {}, opts = {}) {
   const qs = new URLSearchParams(query).toString();
   const cacheKey = `mcp:deskhub:skills:${qs}`;
   const hit = getCache(cacheKey);
   if (hit) return hit.data;
 
-  const json = await fetchDeskhub(`/api/v1/skills${qs ? '?' + qs : ''}`);
+  const json = await fetchDeskhub(`/api/v1/skills${qs ? '?' + qs : ''}`, opts);
   // API 返回 { success, data: { items: [...], total, ... } }
   const items = json.data?.items || json.data || [];
   setCache(cacheKey, items, 600);
   return items;
 }
 
-export async function getDeskhubSkill(slug) {
+export async function getDeskhubSkill(slug, opts = {}) {
   const cacheKey = `mcp:deskhub:detail:${slug}`;
   const hit = getCache(cacheKey);
   if (hit) return hit.data;
 
-  const json = await fetchDeskhub(`/api/v1/skills/${encodeURIComponent(slug)}`);
+  const json = await fetchDeskhub(`/api/v1/skills/${encodeURIComponent(slug)}`, opts);
   // API 返回 { success, data: { id, slug, displayName, summary, ... } }
   setCache(cacheKey, json.data || json, 1800);
   return json.data || json;
@@ -60,7 +61,7 @@ export async function getDeskhubVersions(query = {}) {
  * @param {string} filePath - 文件相对路径（如 "SKILL.md"、"scripts/agenda.py"）
  * @returns {Promise<{content: string, filename: string}>}
  */
-export async function fetchDeskhubFile(slug, filePath) {
+export async function fetchDeskhubFile(slug, filePath, { signal } = {}) {
   const clean = String(filePath || '').replace(/^\/+/, '');
   const cacheKey = `mcp:deskhub:file:${slug}:${clean}`;
   const hit = getCache(cacheKey);
@@ -69,7 +70,7 @@ export async function fetchDeskhubFile(slug, filePath) {
   // 路径里可能有 /，encodeURIComponent 会过度编码——按段 encode 保留结构
   const encodedPath = clean.split('/').map(encodeURIComponent).join('/');
   const url = `${DESKHUB_BASE()}/api/v1/skills/${encodeURIComponent(slug)}/files/${encodedPath}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal });
   if (!res.ok) throw new Error(`DeskHub file ${res.status}: ${url}`);
 
   const json = await res.json();
@@ -192,58 +193,12 @@ export async function getUmamiActive() {
 // ============================================================
 
 const MCP_URL = () => process.env.MCP_ENDPOINT || 'http://127.0.0.1:18790/deskclaw/mcp';
-let deskclawSessionId = null;
 
-async function initDeskclawSession() {
-  const res = await fetch(MCP_URL(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-    body: JSON.stringify({
-      jsonrpc: '2.0', method: 'initialize', id: 1,
-      params: {
-        protocolVersion: '2025-03-26',
-        capabilities: {},
-        clientInfo: { name: 'teamboard-mcp-proxy', version: '1.0' },
-      },
-    }),
-  });
-  deskclawSessionId = res.headers.get('mcp-session-id');
-  if (!deskclawSessionId) throw new Error('DeskClaw MCP initialize failed: no session ID');
-  return res;
-}
-
-async function deskclawCall(method, params = {}, id = Date.now()) {
-  // 400 = session 过期，重置后最多重试 2 次（原递归实现无上限，上游持续 400 会栈爆）
-  let attempts = 0;
-  let currentId = id;
-  while (true) {
-    if (!deskclawSessionId) await initDeskclawSession();
-
-    const res = await fetch(MCP_URL(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-        'Mcp-Session-Id': deskclawSessionId,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: currentId }),
-    });
-
-    if (!res.ok && res.status === 400) {
-      if (attempts++ < 2) {
-        deskclawSessionId = null;
-        currentId++;
-        continue;
-      }
-      throw new Error(`DeskClaw MCP 持续返 400（已重试 ${attempts} 次）`);
-    }
-
-    const text = await res.text();
-    const dataLine = text.split('\n').find(l => l.startsWith('data: '));
-    if (!dataLine) throw new Error('Invalid DeskClaw MCP response');
-    return JSON.parse(dataLine.slice(6));
-  }
-}
+const { mcpCall: deskclawCall, initSession: initDeskclawSession } = createMcpRpc({
+  getUrl: MCP_URL,
+  clientInfo: { name: 'teamboard-mcp-proxy', version: '1.0' },
+  label: 'DeskClaw MCP',
+});
 
 export async function listDeskclawTools() {
   const cacheKey = 'mcp:deskclaw:tools';
@@ -292,7 +247,7 @@ export async function getDeskclawInfo() {
   const hit = getCache(cacheKey);
   if (hit) return hit.data;
 
-  deskclawSessionId = null;
+  // initSession 内部每次都发 initialize 请求刷新 sessionId，不依赖前值
   const initRes = await initDeskclawSession();
   const text = await initRes.text();
   const dataLine = text.split('\n').find(l => l.startsWith('data: '));
