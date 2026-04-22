@@ -45,11 +45,20 @@ function parseJSON(str) {
 //  工单 (Plans)
 // ============================================================
 
-export function createPlan({ name, type, priority = 'medium', desc = '', status = 'next', owner = '', deadline = '', related_skill = '', attachment = '' }) {
+export function createPlan({
+  name, type, priority = 'medium', desc = '', status = 'next',
+  owner = '', deadline = '', related_skill = '', attachment = '',
+  authorType = 'human', proxyAuthorId = null, proxyMetadata = null,
+}) {
   if (!name || !type) throw new Error('name 和 type 必填');
   const id = 'p' + uid();
-  db.prepare(`INSERT INTO plans (id, name, type, status, priority, description, owner, deadline, related_skill, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, name, type, status, priority, desc, owner, deadline, related_skill, attachment);
+  const metaStr = proxyMetadata ? JSON.stringify(proxyMetadata) : null;
+  db.prepare(`INSERT INTO plans (
+    id, name, type, status, priority, description, owner, deadline, related_skill, attachment,
+    author_type, proxy_author_id, proxy_metadata
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, name, type, status, priority, desc, owner, deadline, related_skill, attachment,
+      authorType, proxyAuthorId, metaStr);
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
   logChange('plan', id, 'created', `创建工单「${name}」`, owner, priority);
   return {
@@ -57,6 +66,8 @@ export function createPlan({ name, type, priority = 'medium', desc = '', status 
     priority: plan.priority, created: fmtDate(plan.created_at),
     desc: plan.description, result: plan.result,
     owner: plan.owner || '', deadline: plan.deadline || '',
+    authorType: plan.author_type || 'human',
+    proxyAuthorId: plan.proxy_author_id || null,
   };
 }
 

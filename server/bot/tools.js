@@ -476,6 +476,9 @@ async function runToolInternal(name, input, context) {
         priority: input.priority || 'medium',
         desc: input.desc || '', owner: input.owner || user.username,
         deadline: input.deadline || '', related_skill: input.related_skill || '',
+        authorType: 'ai',
+        proxyAuthorId: user.username,
+        proxyMetadata: buildProxyMetadata(),
       });
       return { ok: true, plan_id: plan.id, authorType: 'ai', proxy_author_id: user.username,
         note: `工单已创建（小合代${user.username}创建，author_type=ai）` };
