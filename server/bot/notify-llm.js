@@ -15,6 +15,7 @@ import { runAgentLoop } from './agent-loop.js';
 import { beijingNowLine, formatBeijingNow } from '../utils/time.js';
 import db from '../db/init.js';
 import { loadUserMemoryByUsername, parseSegments } from './memory/index.js';
+import { getPatrolConfigValue } from '../mcp/db-ops.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
 const MAX_TOKENS = 4096;
@@ -140,13 +141,14 @@ async function buildNotifyPrompt(changes) {
 }
 
 /**
- * 预查本地 DB 里 deadline 临近（≤3 天）或已逾期的活跃工单，喂给 LLM 做巡检决策。
+ * 预查本地 DB 里 deadline 临近或已逾期的活跃工单，喂给 LLM 做巡检决策。
+ * 阈值走 patrol_config.deadline_alert_days（默认 3 天，可通过 update_patrol_config 动态改）。
  * 北京时间 endOfDay 语义：YYYY-MM-DD 当天 23:59+08 之前都不算逾期。
  */
 function queryDeadlineAlerts() {
   const { today } = formatBeijingNow();
-  // SQLite 里把 deadline 当 YYYY-MM-DD 文本比较即可（同格式字典序 = 日期序）
-  const plus3 = addDaysBeijing(today, 3);
+  const alertDays = getPatrolConfigValue('deadline_alert_days') ?? 3;
+  const threshold = addDaysBeijing(today, alertDays);
   const rows = db.prepare(`
     SELECT id, name, owner, deadline, priority, status
     FROM plans
@@ -154,7 +156,7 @@ function queryDeadlineAlerts() {
       AND deadline != ''
       AND deadline <= ?
     ORDER BY deadline ASC
-  `).all(plus3);
+  `).all(threshold);
 
   return rows.map(r => {
     const daysLeft = dayDiffBeijing(today, r.deadline);

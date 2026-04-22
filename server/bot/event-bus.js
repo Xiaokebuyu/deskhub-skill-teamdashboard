@@ -9,14 +9,22 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { getPatrolConfigValue } from '../mcp/db-ops.js';
 
 export const bus = new EventEmitter();
 
 const buffer = [];
 let flushTimer = null;
 
-const HIGH_WAIT = Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000;     // 高优 1 分钟
-const NORMAL_WAIT = Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000; // 普通 10 分钟
+// flush 窗口：启动时从 patrol_config 读一次缓存（热更新需重启，plan 里说明过）
+const HIGH_WAIT = (() => {
+  const v = getPatrolConfigValue('high_flush_ms');
+  return Number(v) || Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000;
+})();
+const NORMAL_WAIT = (() => {
+  const v = getPatrolConfigValue('normal_flush_ms');
+  return Number(v) || Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000;
+})();
 
 /** @type {((batch: Array) => Promise<void>) | null} */
 let onFlush = null;

@@ -21,6 +21,7 @@ import {
   buildPersonalCard,
 } from './card-templates.js';
 import { logDegrade } from './degrade.js';
+import { getPatrolConfigValue } from '../mcp/db-ops.js';
 
 /**
  * 启动变更检测
@@ -75,10 +76,8 @@ async function handleBatch(batch) {
  * 推送到配置的群聊
  */
 async function sendToGroups(card) {
-  const chatIds = (process.env.FEISHU_NOTIFY_CHAT_IDS || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  const raw = getPatrolConfigValue('notify_chat_ids') || '';
+  const chatIds = raw.split(',').map(s => s.trim()).filter(Boolean);
 
   for (const chatId of chatIds) {
     await createAndSendCard(chatId, 'chat_id', card);

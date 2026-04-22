@@ -7,8 +7,7 @@ import { runPatrol } from './notify-llm.js';
 import { createAndSendCard, getFeishuOpenIds } from './feishu.js';
 import { buildPatrolCard, buildPersonalCard } from './card-templates.js';
 import { logDegrade } from './degrade.js';
-
-const PATROL_HOUR = Number(process.env.BOT_PATROL_HOUR) || 9;
+import { getPatrolConfigValue } from '../mcp/db-ops.js';
 
 let checkTimer = null;
 let lastPatrolDate = '';
@@ -17,10 +16,12 @@ let lastPatrolDate = '';
  * 启动巡检定时器
  */
 export function startPatrol() {
-  // 每分钟检查是否到巡检时间
+  // 每分钟检查是否到巡检时间（每次都读 DB 以支持 patrol_hour/enabled 热更新）
   checkTimer = setInterval(checkPatrolTime, 60_000);
   checkTimer.unref?.();
-  console.log(`[Patrol] 巡检定时器已启动（每天 ${PATROL_HOUR}:00）`);
+  const hour = getPatrolConfigValue('patrol_hour');
+  const enabled = getPatrolConfigValue('patrol_enabled');
+  console.log(`[Patrol] 巡检定时器已启动（patrol_hour=${hour}, enabled=${enabled}，热读 DB）`);
 }
 
 export function stopPatrol() {
@@ -34,11 +35,15 @@ async function checkPatrolTime() {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
 
-  if (now.getHours() !== PATROL_HOUR) return;
+  // 每次都读 DB，支持 patrol_hour / patrol_enabled 热更新
+  const enabled = getPatrolConfigValue('patrol_enabled');
+  if (enabled !== 1) return;
+  const patrolHour = getPatrolConfigValue('patrol_hour');
+  if (now.getHours() !== patrolHour) return;
   if (lastPatrolDate === today) return;
   lastPatrolDate = today;
 
-  console.log('[Patrol] 开始每日巡检...');
+  console.log(`[Patrol] 开始每日巡检（hour=${patrolHour}）...`);
 
   try {
     const decision = await runPatrol();
@@ -72,10 +77,8 @@ async function checkPatrolTime() {
 }
 
 async function sendToGroups(card) {
-  const chatIds = (process.env.FEISHU_NOTIFY_CHAT_IDS || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  const raw = getPatrolConfigValue('notify_chat_ids') || '';
+  const chatIds = raw.split(',').map(s => s.trim()).filter(Boolean);
 
   for (const chatId of chatIds) {
     await createAndSendCard(chatId, 'chat_id', card);
