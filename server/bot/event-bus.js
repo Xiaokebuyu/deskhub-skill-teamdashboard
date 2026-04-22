@@ -9,22 +9,25 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { getPatrolConfigValue } from '../mcp/db-ops.js';
 
 export const bus = new EventEmitter();
 
 const buffer = [];
 let flushTimer = null;
 
-// flush 窗口：启动时从 patrol_config 读一次缓存（热更新需重启，plan 里说明过）
-const HIGH_WAIT = (() => {
-  const v = getPatrolConfigValue('high_flush_ms');
-  return Number(v) || Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000;
-})();
-const NORMAL_WAIT = (() => {
-  const v = getPatrolConfigValue('normal_flush_ms');
-  return Number(v) || Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000;
-})();
+/**
+ * 每次 change 事件时 lazy 读 DB 配置，避免与 db-ops.js 循环依赖。
+ * 副作用：实际上 flush 窗口变成了热更新（bonus，不坏事）。
+ */
+async function getFlushWait(priority) {
+  const { getPatrolConfigValue } = await import('../mcp/db-ops.js');
+  const key = priority === 'high' ? 'high_flush_ms' : 'normal_flush_ms';
+  const v = getPatrolConfigValue(key);
+  if (v) return Number(v);
+  return priority === 'high'
+    ? Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000
+    : Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000;
+}
 
 /** @type {((batch: Array) => Promise<void>) | null} */
 let onFlush = null;
@@ -41,9 +44,12 @@ bus.on('change', (record) => {
 
   // 首条变更启动定时器；后续变更不重置（避免持续推迟）
   if (!flushTimer) {
-    const wait = record.priority === 'high' ? HIGH_WAIT : NORMAL_WAIT;
-    flushTimer = setTimeout(flush, wait);
-    flushTimer.unref?.(); // 不阻止进程退出
+    getFlushWait(record.priority).then(wait => {
+      // 双重检查：拿到 wait 的时候可能已经有 timer（并发 emit），防重建
+      if (flushTimer) return;
+      flushTimer = setTimeout(flush, wait);
+      flushTimer.unref?.();
+    });
   }
 });
 

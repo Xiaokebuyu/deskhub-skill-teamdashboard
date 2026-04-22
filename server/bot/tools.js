@@ -20,6 +20,7 @@ import {
   submitScores, editScore, deleteScore, appendVariantFiles,
   grantPermission, revokePermission, listUserPermissions, listAllPermissionGrants,
   getPatrolConfig, setPatrolConfig, PATROL_CONFIG_KEYS, PATROL_CONFIG_SCHEMA,
+  createDimension, editDimension, deleteDimension,
 } from '../mcp/db-ops.js';
 import {
   listDeskhubSkills, getDeskhubSkill, fetchDeskhubFile,
@@ -314,6 +315,47 @@ export const TOOL_DEFINITIONS = [
         section: { type: 'string', description: '要删除的段落标题' },
       },
       required: ['section'],
+    },
+  },
+
+  // ========================================================
+  //  维度代笔（dimension.crud）
+  // ========================================================
+  {
+    name: 'proxy_add_dimension',
+    description: '[代笔] 新增一个评测维度。仅在管理员明确要求"加一个评测维度 XXX 满分 Y"时用。需要 dimension.crud 权限。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '维度名称（如 "响应速度"、"可维护性"）' },
+        max: { type: 'number', description: '满分，默认 10' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'proxy_edit_dimension',
+    description: '[代笔] 编辑维度：改名 / 改满分 / 启用停用（active 字段）。需要 dimension.crud。关闭某个维度用 { dimension_id, active: false }。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dimension_id: { type: 'string' },
+        name: { type: 'string' },
+        max: { type: 'number' },
+        active: { type: 'boolean', description: 'true=启用，false=停用（保留历史评分）' },
+      },
+      required: ['dimension_id'],
+    },
+  },
+  {
+    name: 'proxy_delete_dimension',
+    description: '[代笔] 软删除维度（设 active=0，不物理删除，历史评分保留）。需要 dimension.crud。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dimension_id: { type: 'string' },
+      },
+      required: ['dimension_id'],
     },
   },
 
@@ -737,6 +779,31 @@ async function runToolInternal(name, input, context) {
       const saved = await saveUserMemory(openId, boundUser, updated);
       return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
         note: `已忘记「${input.section}」段落` };
+    }
+
+    // ========================================================
+    //  维度代笔
+    // ========================================================
+    case 'proxy_add_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      const dim = createDimension({ name: input.name, max: input.max ?? 10 });
+      return { ok: true, dimension: dim,
+        note: `维度「${dim.name}」已创建（id=${dim.id}，满分=${dim.max}，by ${user?.username}）` };
+    }
+
+    case 'proxy_edit_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      const { dimension_id, ...fields } = input;
+      editDimension(dimension_id, fields);
+      return { ok: true, dimension_id,
+        note: `维度 ${dimension_id} 已更新（by ${user?.username}）` };
+    }
+
+    case 'proxy_delete_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      deleteDimension(input.dimension_id);
+      return { ok: true, dimension_id: input.dimension_id,
+        note: `维度 ${input.dimension_id} 已停用（软删除，历史评分保留；by ${user?.username}）` };
     }
 
     // ========================================================
