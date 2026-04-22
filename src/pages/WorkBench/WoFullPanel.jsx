@@ -310,7 +310,10 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
     return btns.length > 0 ? <div style={{ display: "flex", gap: GAP.sm, flexWrap: "wrap" }}>{btns}</div> : null;
   })();
 
-  const isOverdue = wo.deadline && wo.status !== "done" && new Date(wo.deadline) < new Date();
+  // 北京时间 endOfDay 语义：deadline=YYYY-MM-DD 的那一天 23:59+08 之前都不算逾期。
+  // 之前用 new Date(wo.deadline) 会把它当 UTC 00:00 解析，东八区 08:00 就误判逾期。
+  const isOverdue = wo.deadline && wo.status !== "done"
+    && new Date(`${wo.deadline}T23:59:59+08:00`) < new Date();
 
   return (
     <FullPanel show={show} onClose={onClose} originRect={originRect} actions={actionBtn}>
