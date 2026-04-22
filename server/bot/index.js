@@ -975,7 +975,7 @@ async function handleMessage(text, chatId, userId, chatType) {
 
     try {
       const { messages, toolLog } = getSession(userId);
-      const result = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId });
+      const result = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId, chatType });
       const { text: reply, toolSummaries } = result;
       updateSession(userId, text, reply, toolSummaries);
 

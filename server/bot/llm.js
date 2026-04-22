@@ -21,6 +21,7 @@
 import { TOOL_DEFINITIONS, TOOL_DEFINITIONS_CHAT_ONLY, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop, ERROR_TEXT } from './agent-loop.js';
 import { beijingNowLine } from '../utils/time.js';
+import { loadUserMemory, renderForInjection } from './memory/index.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
 const MAX_TOKENS = 8192;
@@ -368,7 +369,7 @@ Markdown 表格和块级 markup（\`[[plan:...]]\` / \`[[skill:...]]\` / \`[[mcp
 /**
  * 构建 system prompt（数组形式，前段静态可缓存，后段动态）
  */
-function buildSystem(boundUser, toolLog) {
+function buildSystem(boundUser, toolLog, memoryInjection = '') {
   let dynamicSuffix = `\n\n## 当前上下文\n${beijingNowLine()}`;
 
   if (toolLog && toolLog.length > 0) {
@@ -380,6 +381,10 @@ function buildSystem(boundUser, toolLog) {
     dynamicSuffix += `\n\n## 当前对话用户\n用户名：${boundUser.username}\n显示名：${boundUser.display_name || boundUser.username}\n角色：${roleLabel}\n\n你知道在和谁说话。回复时可以自然地称呼对方。通知别人时排除这个人自己。`;
   } else {
     dynamicSuffix += `\n\n## 当前对话用户\n未绑定飞书账号的用户。你可以正常聊天，但不要查询平台数据或发送通知。如果对方想使用平台功能，友好地提醒：私聊发送「绑定 用户名 密码」来关联账号。`;
+  }
+
+  if (memoryInjection) {
+    dynamicSuffix += `\n\n## 你对这位用户的记忆\n${memoryInjection}\n\n记忆用于让你的回复更贴合这个人的偏好。**不要**把记忆当事实引用（比如不要说"根据我的记忆你在跟进工单 X"——去查 DB）。记忆是软信息：偏好、习惯、画像。用户明确表达"记住/以后这样"时，调 update_memory_section 更新对应段。`;
   }
 
   return [
@@ -413,6 +418,21 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
     ? withToolsCache(TOOL_DEFINITIONS)
     : TOOL_DEFINITIONS_CHAT_ONLY;
 
+  // 读取记忆并按 chatType 过滤 Private（群聊只给 Public，私聊给全量）
+  let memoryInjection = '';
+  try {
+    if (chatContext?.openId) {
+      const mem = await loadUserMemory(chatContext.openId, boundUser);
+      memoryInjection = renderForInjection({
+        content: mem.content,
+        chatType: chatContext.chatType || 'p2p',
+      });
+    }
+  } catch (err) {
+    console.warn('[Bot/Memory] load failed:', err.message);
+    // 记忆失败不阻塞对话，继续走无记忆流程
+  }
+
   const initialMessages = [
     ...history,
     { role: 'user', content: userText },
@@ -424,7 +444,7 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
     const result = await runAgentLoop({
       maxTokens: MAX_TOKENS,
       maxRounds: MAX_TOOL_ROUNDS,
-      buildSystem: () => buildSystem(boundUser, toolLog),
+      buildSystem: () => buildSystem(boundUser, toolLog, memoryInjection),
       initialMessages,
       tools,
       thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET },
