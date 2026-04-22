@@ -333,7 +333,81 @@ function buildProxyMetadata() {
   };
 }
 
+// 写类工具（db_write 分类用）
+const WRITE_TOOL_PREFIXES = ['proxy_'];
+// 走外部 HTTP 的工具（DeskHub / Umami / 飞书）
+const HTTP_TOOL_NAMES = new Set([
+  'list_deskhub_skills', 'get_deskhub_skill', 'get_deskhub_skill_file',
+  'get_umami_stats', 'get_umami_active',
+  'send_notification', 'send_file_to_user',
+]);
+
+/**
+ * 根据 err 和 toolName 分类错误，返回 { category, retryable, suggestion? }
+ * 给 LLM 做 agentic 决策用，不在此处自动重试
+ */
+function classifyError(err, toolName) {
+  const msg = err?.message || String(err);
+  const code = err?.code || '';
+
+  // SQLite 错误
+  if (typeof code === 'string' && code.startsWith('SQLITE_')) {
+    const isWrite = WRITE_TOOL_PREFIXES.some(p => toolName.startsWith(p));
+    const category = isWrite ? 'db_write' : 'db_read';
+    const retryable = code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED';
+    return { category, retryable };
+  }
+
+  // 权限类（assertProxyRole 或业务所有权校验抛出）
+  if (msg.includes('代笔工具需要绑定用户') ||
+      msg.includes('无权执行') ||
+      msg.includes('只能编辑自己代笔') ||
+      msg.includes('只能删除自己代笔')) {
+    return { category: 'permission', retryable: false };
+  }
+
+  // 参数/资源不存在类（LLM 换参或换资源可再试）
+  if (msg.includes('必填') || msg.includes('不存在') ||
+      msg.includes('未找到') || msg.includes('超过') ||
+      msg.includes('内容为空') || msg.startsWith('未知工具') ||
+      msg.includes('未绑定飞书')) {
+    return { category: 'invalid_input', retryable: true };
+  }
+
+  // 文件系统
+  if (code === 'ENOENT' || code === 'EACCES' || code === 'EISDIR' || code === 'EPERM') {
+    return { category: 'fs', retryable: false };
+  }
+
+  // HTTP
+  if (HTTP_TOOL_NAMES.has(toolName) ||
+      msg.includes('fetch failed') || msg.includes('ECONNRESET') ||
+      msg.includes('ETIMEDOUT') || msg.includes('socket hang up') ||
+      msg.includes('network')) {
+    return { category: 'http', retryable: true };
+  }
+
+  return { category: 'unknown', retryable: false };
+}
+
 export async function executeTool(name, input = {}, context = {}) {
+  try {
+    return await runToolInternal(name, input, context);
+  } catch (err) {
+    const { category, retryable, suggestion } = classifyError(err, name);
+    const msg = err?.message || String(err);
+    if (category === 'unknown') {
+      console.error(`[Bot/Tool] ${name} 失败 (${category}):`, msg, err?.stack);
+    } else {
+      console.error(`[Bot/Tool] ${name} 失败 (${category}, retryable=${retryable}):`, msg);
+    }
+    const error = { category, message: msg, retryable, tool: name };
+    if (suggestion) error.suggestion = suggestion;
+    return { ok: false, error };
+  }
+}
+
+async function runToolInternal(name, input, context) {
   switch (name) {
     case 'list_plans':
       return listPlans({ type: input.type, status: input.status });
