@@ -31,6 +31,7 @@ import {
   upsertSection, removeSection, appendNote,
   checkSizeLimit, MEMORY_SIZE_SOFT_LIMIT, MEMORY_SIZE_HARD_LIMIT,
 } from './memory/index.js';
+import { assertAbility } from './abilities.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -363,21 +364,6 @@ export function withToolsCache(tools) {
 
 // ── 工具执行器 ──
 
-/**
- * 校验 boundUser 是否存在且有某角色
- * proxy_* 工具都需要 boundUser（非绑定用户根本看不到这些工具）
- */
-function assertProxyRole(context, ...allowed) {
-  const user = context?.boundUser;
-  if (!user) {
-    throw new Error('代笔工具需要绑定用户身份。未绑定用户不能使用。');
-  }
-  if (allowed.length && !allowed.includes(user.role)) {
-    throw new Error(`角色 ${user.role} 无权执行此代笔操作（需要 ${allowed.join('/')}）`);
-  }
-  return user;
-}
-
 /** 构造代笔 metadata，每次写入记录时刻 + 模型信息 */
 function buildProxyMetadata() {
   return {
@@ -412,11 +398,11 @@ function classifyError(err, toolName) {
     return { category, retryable };
   }
 
-  // 权限类（assertProxyRole 或业务所有权校验抛出）
-  if (msg.includes('代笔工具需要绑定用户') ||
-      msg.includes('无权执行') ||
+  // 权限类（assertAbility / 业务所有权校验 抛出）
+  if (msg.includes('无权执行') ||
       msg.includes('只能编辑自己代笔') ||
-      msg.includes('只能删除自己代笔')) {
+      msg.includes('只能删除自己代笔') ||
+      msg.includes('未定义的 ability')) {
     return { category: 'permission', retryable: false };
   }
 
@@ -524,7 +510,7 @@ async function runToolInternal(name, input, context) {
     //  代笔写入（proxy_*）
     // ========================================================
     case 'proxy_create_plan': {
-      const user = assertProxyRole(context, 'admin');
+      const user = assertAbility(context, 'plan.write');
       const plan = createPlan({
         name: input.name, type: input.type,
         priority: input.priority || 'medium',
@@ -539,14 +525,14 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_edit_plan': {
-      const user = assertProxyRole(context, 'admin');
+      const user = assertAbility(context, 'plan.write');
       const { plan_id, ...fields } = input;
       editPlan(plan_id, fields);
       return { ok: true, plan_id, note: `工单已更新（小合代${user.username}编辑）` };
     }
 
     case 'proxy_add_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const v = addVariant(input.plan_id, {
         name: input.name,
         uploader: user.username,
@@ -562,7 +548,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_edit_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       // 校验：仅能改自己代笔的
       const detail = db.prepare('SELECT author_type, proxy_author_id, uploader FROM variants WHERE id = ?').get(input.variant_id);
       if (!detail) throw new Error('方案不存在');
@@ -575,7 +561,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_delete_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM variants WHERE id = ?').get(input.variant_id);
       if (!detail) throw new Error('方案不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -586,7 +572,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_submit_scores': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const result = submitScores(input.variant_id, {
         tester: user.username,
         scores: input.scores,
@@ -601,7 +587,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_edit_score': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
       if (!detail) throw new Error('评分不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -613,7 +599,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_delete_score': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
       if (!detail) throw new Error('评分不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -627,6 +613,7 @@ async function runToolInternal(name, input, context) {
     //  记忆工具
     // ========================================================
     case 'update_memory_section': {
+      assertAbility(context, 'memory.self');
       const openId = context?.chatContext?.openId;
       if (!openId) throw new Error('记忆工具需要当前对话 open_id');
       const boundUser = context?.boundUser || null;
@@ -655,6 +642,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'append_memory_note': {
+      assertAbility(context, 'memory.self');
       const openId = context?.chatContext?.openId;
       if (!openId) throw new Error('记忆工具需要当前对话 open_id');
       const boundUser = context?.boundUser || null;
@@ -677,6 +665,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'forget_memory_section': {
+      assertAbility(context, 'memory.self');
       const openId = context?.chatContext?.openId;
       if (!openId) throw new Error('记忆工具需要当前对话 open_id');
       const boundUser = context?.boundUser || null;
@@ -729,7 +718,7 @@ async function runToolInternal(name, input, context) {
     }
 
     case 'proxy_upload_file': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const { writeFileSync, mkdirSync } = await import('fs');
       const { dirname, join } = await import('path');
       const { fileURLToPath } = await import('url');
