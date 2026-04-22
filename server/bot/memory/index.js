@@ -122,6 +122,21 @@ export async function loadUserMemory(openId, boundUser = null) {
 }
 
 /**
+ * 直接按 username 读 user-{username}.md —— 给 analyzeChanges / runPatrol 等
+ * "不在当前对话 session、但要引用某人画像"的场景用。
+ * 不走 _index.json，不触发 lastSeen 更新。
+ */
+export async function loadUserMemoryByUsername(username) {
+  if (!username) return '';
+  try {
+    return await fs.readFile(pathOf(`user-${username}`), 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return '';
+    throw err;
+  }
+}
+
+/**
  * 写入用户的 memory（整文件覆盖）
  * 调用方通常先 loadUserMemory 拿到 content，改完再 save
  */

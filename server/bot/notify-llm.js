@@ -14,6 +14,7 @@ import { TOOL_DEFINITIONS, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop } from './agent-loop.js';
 import { beijingNowLine, formatBeijingNow } from '../utils/time.js';
 import db from '../db/init.js';
+import { loadUserMemoryByUsername, parseSegments } from './memory/index.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
 const MAX_TOKENS = 4096;
@@ -23,10 +24,70 @@ const THINKING_BUDGET = 1500;
 //  System Prompts（按模式切换，每段最后用 cache_control 缓存）
 // ============================================================
 
-function buildNotifyPrompt(changes) {
+/**
+ * 汇总本批变更涉及的所有 username，含：
+ *   - actor（谁动的手）
+ *   - 对应实体的 owner / uploader / tester（从 DB 反查）
+ */
+function collectAffectedUsernames(changes) {
+  const set = new Set();
+  for (const c of changes) {
+    if (c.actor) set.add(c.actor);
+    try {
+      if (c.entityType === 'plan') {
+        const p = db.prepare('SELECT owner FROM plans WHERE id = ?').get(c.entityId);
+        if (p?.owner) set.add(p.owner);
+      } else if (c.entityType === 'variant') {
+        const v = db.prepare('SELECT uploader, plan_id FROM variants WHERE id = ?').get(c.entityId);
+        if (v?.uploader) set.add(v.uploader);
+        if (v?.plan_id) {
+          const p = db.prepare('SELECT owner FROM plans WHERE id = ?').get(v.plan_id);
+          if (p?.owner) set.add(p.owner);
+        }
+      } else if (c.entityType === 'score') {
+        const s = db.prepare('SELECT tester, variant_id FROM scores WHERE id = ?').get(c.entityId);
+        if (s?.tester) set.add(s.tester);
+        if (s?.variant_id) {
+          const v = db.prepare('SELECT uploader, plan_id FROM variants WHERE id = ?').get(s.variant_id);
+          if (v?.uploader) set.add(v.uploader);
+          if (v?.plan_id) {
+            const p = db.prepare('SELECT owner FROM plans WHERE id = ?').get(v.plan_id);
+            if (p?.owner) set.add(p.owner);
+          }
+        }
+      }
+    } catch { /* 实体可能已删除，忽略 */ }
+  }
+  return [...set];
+}
+
+/**
+ * 为涉及的每位用户加载 memory 的 Public 段（群决策场景 → 不含 Private）
+ */
+async function loadAffectedMemorySnippets(usernames) {
+  const parts = [];
+  for (const u of usernames) {
+    try {
+      const raw = await loadUserMemoryByUsername(u);
+      if (!raw?.trim()) continue;
+      const segs = parseSegments(raw);
+      if (segs.public.trim()) {
+        parts.push(`### ${u}\n${segs.public.trim()}`);
+      }
+    } catch (err) {
+      console.warn(`[Bot/Notify] 载入 ${u} memory 失败:`, err.message);
+    }
+  }
+  return parts.join('\n\n');
+}
+
+async function buildNotifyPrompt(changes) {
   const changeList = changes.map(c =>
     `- [${c.priority}] ${c.action} | ${c.entityType}:${c.entityId} | ${c.summary} | actor: ${c.actor || '未知'}`
   ).join('\n');
+
+  const affected = collectAffectedUsernames(changes);
+  const memSnippet = await loadAffectedMemorySnippets(affected);
 
   const staticSystem = `你是小合，DeskSkill TeamBoard 的协作中枢。现在你收到一批工作台变更，需要决定通知策略。
 
@@ -62,8 +123,12 @@ function buildNotifyPrompt(changes) {
 如果这批变更不值得通知任何人：
 { "group": { "send": false }, "individuals": [], "reasoning": "..." }`;
 
-  const dynamic = `\n\n${beijingNowLine()}`;
-  const userMsg = `以下是待处理的变更批次：\n\n${changeList}\n\n请分析这些变更，决定通知策略。先用工具查询相关工单详情和团队成员，再做决策。`;
+  const memoryBlock = memSnippet
+    ? `\n\n## 相关人员画像（从 memory 读取的 Public 段）\n${memSnippet}\n\n参考这些软信息做通知决策——如果某人的画像明确写了"不想被群里打扰"、"只要高优事项"等偏好，请尊重。`
+    : '';
+
+  const dynamic = `\n\n${beijingNowLine()}${memoryBlock}`;
+  const userMsg = `以下是待处理的变更批次：\n\n${changeList}\n\n请分析这些变更，决定通知策略。先用工具查询相关工单详情和团队成员，再做决策；相关人员画像已在 system 里给出。`;
 
   return {
     system: [
@@ -218,7 +283,7 @@ function parseDecision(text) {
 // ============================================================
 
 export async function analyzeChanges(changes) {
-  const { system, user } = buildNotifyPrompt(changes);
+  const { system, user } = await buildNotifyPrompt(changes);
   const raw = await runAgent(system, user);
   const decision = parseDecision(raw);
 
