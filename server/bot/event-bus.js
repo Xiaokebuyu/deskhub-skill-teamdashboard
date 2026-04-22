@@ -24,9 +24,7 @@ async function getFlushWait(priority) {
   const key = priority === 'high' ? 'high_flush_ms' : 'normal_flush_ms';
   const v = getPatrolConfigValue(key);
   if (v) return Number(v);
-  return priority === 'high'
-    ? Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000
-    : Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000;
+  return envFallbackWait(priority);
 }
 
 /** @type {((batch: Array) => Promise<void>) | null} */
@@ -39,17 +37,33 @@ export function setFlushHandler(handler) {
   onFlush = handler;
 }
 
+function envFallbackWait(priority) {
+  return priority === 'high'
+    ? Number(process.env.BOT_HIGH_FLUSH_MS) || 60_000
+    : Number(process.env.BOT_NORMAL_FLUSH_MS) || 600_000;
+}
+
 bus.on('change', (record) => {
   buffer.push(record);
 
   // 首条变更启动定时器；后续变更不重置（避免持续推迟）
   if (!flushTimer) {
-    getFlushWait(record.priority).then(wait => {
-      // 双重检查：拿到 wait 的时候可能已经有 timer（并发 emit），防重建
-      if (flushTimer) return;
-      flushTimer = setTimeout(flush, wait);
-      flushTimer.unref?.();
-    });
+    getFlushWait(record.priority)
+      .then(wait => {
+        // 双重检查：拿到 wait 的时候可能已经有 timer（并发 emit），防重建
+        if (flushTimer) return;
+        flushTimer = setTimeout(flush, wait);
+        flushTimer.unref?.();
+      })
+      .catch(err => {
+        // 没 catch 的话 Promise.reject 会触发 unhandledRejection，
+        // 全局 handler 只记日志不退出 → flushTimer 永远是 null → 后续变更通知全丢。
+        // 降级：回退到 env 默认值，保证 timer 一定被设置，变更不丢失。
+        console.warn('[EventBus] getFlushWait 失败，回退 env 默认:', err.message);
+        if (flushTimer) return;
+        flushTimer = setTimeout(flush, envFallbackWait(record.priority));
+        flushTimer.unref?.();
+      });
   }
 });
 
