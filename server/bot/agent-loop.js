@@ -15,10 +15,29 @@ import { client, DEFAULT_MODEL, INTERLEAVED_THINKING_HEADERS } from './anthropic
 
 const ERROR_TEXT = '抱歉，我暂时无法处理请求，请稍后再试。';
 
+/** 单工具执行超时（毫秒）。超过则中止该工具并把 timeout error 喂给 LLM */
+const TOOL_TIMEOUT_MS = Number(process.env.BOT_TOOL_TIMEOUT_MS) || 30000;
+
 /** 从 content 数组提取所有 text blocks 拼成字符串 */
 function extractText(content) {
   if (!Array.isArray(content)) return '';
   return content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
+/** executeTool 加 timeout 保护。超时抛 Error（code='TOOL_TIMEOUT'） */
+function runToolWithTimeout(executeTool, name, input, timeoutMs) {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`工具 ${name} 执行超过 ${timeoutMs}ms 未返回`);
+      err.code = 'TOOL_TIMEOUT';
+      reject(err);
+    }, timeoutMs);
+  });
+  return Promise.race([
+    Promise.resolve().then(() => executeTool(name, input)),
+    timeoutPromise,
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -146,14 +165,27 @@ export async function runAgentLoop(opts) {
     if (onToolStart) await onToolStart(toolSteps);
 
     const toolResults = [];
+    const errorInfos = []; // 本轮每次调用的 error 信息（success 位 null）
     for (const block of toolUseBlocks) {
       let result;
       let isError = false;
+      let errorInfo = null;
+
       try {
-        const out = await executeTool(block.name, block.input);
+        const out = await runToolWithTimeout(executeTool, block.name, block.input, TOOL_TIMEOUT_MS);
+        // 识别 tools.js Step 1 的结构化 error shape
+        if (out && out.ok === false && out.error) {
+          isError = true;
+          errorInfo = out.error;
+        }
         result = JSON.stringify(out, null, 2);
       } catch (err) {
-        result = `工具执行失败: ${err.message}`;
+        // Step 1 没吞掉的异常（如 timeout、或极端底层错）→ 构造同 shape
+        const category = err?.code === 'TOOL_TIMEOUT' ? 'timeout' : 'unknown';
+        const retryable = category === 'timeout';
+        errorInfo = { category, message: err?.message || String(err), retryable, tool: block.name };
+        console.error(`[AgentLoop] 工具 ${block.name} 异常 (${category}):`, err?.message);
+        result = JSON.stringify({ ok: false, error: errorInfo }, null, 2);
         isError = true;
       }
 
@@ -164,19 +196,41 @@ export async function runAgentLoop(opts) {
       };
       if (isError) tr.is_error = true;
       toolResults.push(tr);
+      errorInfos.push(errorInfo);
 
-      // 工具调用摘要（给 toolLog 用）
+      // 工具调用摘要（给 toolLog 用，失败时带 category）
       const inputBrief = JSON.stringify(block.input).slice(0, 80);
-      toolSummaries.push(`${block.name}(${inputBrief}) → ${isError ? '失败' : '成功'}`);
+      const marker = isError ? `失败(${errorInfo?.category || 'error'})` : '成功';
+      toolSummaries.push(`${block.name}(${inputBrief}) → ${marker}`);
 
       // 用 block.id 精确定位（同名工具多次调用也能正确标记）
       const step = toolSteps.find(s => s.blockId === block.id);
-      if (step) step.done = true;
+      if (step) {
+        step.done = true;
+        if (errorInfo) step.error = errorInfo;
+      }
     }
 
     if (onToolDone) await onToolDone(toolSteps);
 
     messages.push({ role: 'user', content: toolResults });
+
+    // ── 全失败兜底：本轮所有工具都挂且均不可重试 → 提前终止 ──
+    const failed = errorInfos.filter(Boolean);
+    if (failed.length === toolUseBlocks.length && failed.length > 0) {
+      const anyRetryable = failed.some(e => e.retryable);
+      if (!anyRetryable) {
+        console.error(`[AgentLoop] round=${round} 本轮 ${failed.length} 个工具全部失败且均不可重试，提前终止`);
+        const summary = toolSummaries.slice(-failed.length).join('\n');
+        return {
+          text: `${ERROR_TEXT}\n\n本轮尝试：\n${summary}`,
+          toolSteps,
+          toolSummaries,
+          allFailed: true,
+          exhausted: true,
+        };
+      }
+    }
   }
 
   // 轮数耗尽
