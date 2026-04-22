@@ -12,8 +12,10 @@ import ComparisonTable from "./ComparisonTable.jsx";
 /**
  * 第三层完整面板 — 纯信息展示 + 单角色按钮
  */
-export default function WoFullPanel({ wo, dims, show, originRect, onClose, role, user, onAddVariant, onMarkComplete, onOpenScorePanel, onOpenDocReader, onActivate, onReopen, onOpenVariantManager, onEditScore, onDeleteScore }) {
+export default function WoFullPanel({ wo, dims, show, originRect, onClose, role, user, onAddVariant, onMarkComplete, onOpenScorePanel, onOpenDocReader, onActivate, onReopen, onOpenVariantManager, onEditScore, onDeleteScore, onEditPlan }) {
   const [expandedVar, setExpandedVar] = useState(null);
+  const [editingDeadline, setEditingDeadline] = useState(false);
+  const [deadlineDraft, setDeadlineDraft] = useState('');
   const activeDims = (dims || []).filter(d => d.active);
 
   if (!wo) return null;
@@ -341,12 +343,62 @@ export default function WoFullPanel({ wo, dims, show, originRect, onClose, role,
               负责人 <span style={{ color: COLOR.text, fontFamily: FONT_MONO, fontWeight: 500 }}>{wo.owner}</span>
             </div>
           )}
-          {wo.deadline && (
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: isOverdue ? COLOR.error : COLOR.text5 }}>
-              截止 <span style={{ color: isOverdue ? COLOR.error : COLOR.text, fontWeight: isOverdue ? 600 : 500, fontFamily: FONT_MONO }}>
-                {wo.deadline}
-              </span>
-              {isOverdue && <span style={{ marginLeft: GAP.xs, fontSize: FONT_SIZE.sm, fontWeight: 600 }}>已逾期</span>}
+          {(wo.deadline || role === 'admin') && (
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: isOverdue ? COLOR.error : COLOR.text5, display: 'flex', alignItems: 'center', gap: GAP.xs }}>
+              <span>截止</span>
+              {editingDeadline ? (
+                <>
+                  <input
+                    type="date"
+                    value={deadlineDraft}
+                    autoFocus
+                    onChange={e => setDeadlineDraft(e.target.value)}
+                    style={{
+                      fontFamily: FONT_MONO, fontSize: FONT_SIZE.md,
+                      padding: '2px 6px', border: `1px solid ${COLOR.borderLt}`,
+                      borderRadius: 4, color: COLOR.text, background: '#fff',
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      onEditPlan?.(wo.id, { deadline: deadlineDraft || '' });
+                      setEditingDeadline(false);
+                    }}
+                    style={{
+                      fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+                      padding: '2px 8px', border: 'none', borderRadius: 4,
+                      background: COLOR.text, color: '#fff', cursor: 'pointer',
+                    }}
+                  >保存</button>
+                  <button
+                    onClick={() => setEditingDeadline(false)}
+                    style={{
+                      fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+                      padding: '2px 8px', border: `1px solid ${COLOR.borderLt}`,
+                      borderRadius: 4, background: 'transparent', color: COLOR.text5, cursor: 'pointer',
+                    }}
+                  >取消</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: isOverdue ? COLOR.error : COLOR.text, fontWeight: isOverdue ? 600 : 500, fontFamily: FONT_MONO }}>
+                    {wo.deadline || '未设置'}
+                  </span>
+                  {isOverdue && <span style={{ marginLeft: GAP.xs, fontSize: FONT_SIZE.sm, fontWeight: 600 }}>已逾期</span>}
+                  {role === 'admin' && (
+                    <button
+                      title="改截止日期"
+                      onClick={() => { setDeadlineDraft(wo.deadline || ''); setEditingDeadline(true); }}
+                      style={{
+                        border: 'none', background: 'transparent', cursor: 'pointer',
+                        padding: '2px 4px', color: COLOR.sub, display: 'inline-flex', alignItems: 'center',
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           )}
           <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: "#b5a898" }}>
