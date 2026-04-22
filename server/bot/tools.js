@@ -18,6 +18,7 @@ import {
   listPlans, getPlanDetail, getDimensions, listUsers, getRecentChanges,
   createPlan, editPlan, addVariant, editVariant, deleteVariant,
   submitScores, editScore, deleteScore, appendVariantFiles,
+  grantPermission, revokePermission, listUserPermissions, listAllPermissionGrants,
 } from '../mcp/db-ops.js';
 import {
   listDeskhubSkills, getDeskhubSkill, fetchDeskhubFile,
@@ -31,7 +32,7 @@ import {
   upsertSection, removeSection, appendNote,
   checkSizeLimit, MEMORY_SIZE_SOFT_LIMIT, MEMORY_SIZE_HARD_LIMIT,
 } from './memory/index.js';
-import { assertAbility } from './abilities.js';
+import { assertAbility, checkAbility, ABILITIES, ABILITY_NAMES } from './abilities.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -312,6 +313,44 @@ export const TOOL_DEFINITIONS = [
         section: { type: 'string', description: '要删除的段落标题' },
       },
       required: ['section'],
+    },
+  },
+
+  // ========================================================
+  //  权限管理工具（permissions.manage）
+  // ========================================================
+  {
+    name: 'grant_user_ability',
+    description: '给目标用户授予某个 ability（按动作粒度的权限）。需要 permissions.manage。用于把 patrol.config / dimension.crud / system.health 等原本 admin-only 的能力下放给特定 tester 或 member。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string', description: '目标用户 username（必须是 users 表里已存在的）' },
+        ability: { type: 'string', description: '要授予的 ability 名（如 patrol.config、dimension.crud）' },
+      },
+      required: ['target_username', 'ability'],
+    },
+  },
+  {
+    name: 'revoke_user_ability',
+    description: '撤销目标用户的某个 ability。仅撤销显式授权；不会影响角色 fallback（如 admin 依然自动拥有）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string' },
+        ability: { type: 'string' },
+      },
+      required: ['target_username', 'ability'],
+    },
+  },
+  {
+    name: 'list_user_abilities',
+    description: '列出某用户或所有用户的显式授权记录。不带 target_username 则返回全部 grant。注意：角色 fallback（admin 默认拥有所有）不体现在这里——只看 DB 表。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string', description: '留空则返回所有 grant 记录' },
+      },
     },
   },
 
@@ -674,6 +713,50 @@ async function runToolInternal(name, input, context) {
       const saved = await saveUserMemory(openId, boundUser, updated);
       return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
         note: `已忘记「${input.section}」段落` };
+    }
+
+    // ========================================================
+    //  权限管理工具
+    // ========================================================
+    case 'grant_user_ability': {
+      const user = assertAbility(context, 'permissions.manage');
+      const { target_username, ability } = input;
+      if (!ABILITIES[ability]) {
+        throw new Error(`未定义的 ability "${ability}"，合法值：${ABILITY_NAMES.join(', ')}`);
+      }
+      const target = db.prepare('SELECT username FROM users WHERE username = ?').get(target_username);
+      if (!target) throw new Error(`目标用户 ${target_username} 不存在`);
+      // 越权校验：自己都没有的 ability 不能 grant 别人（admin 由 fallback 覆盖所有，不受影响）
+      if (!checkAbility(context, ability)) {
+        throw new Error(`无权授予你自己都没有的 ability "${ability}"`);
+      }
+      grantPermission(target_username, ability, user?.username || '');
+      return { ok: true, target_username, ability,
+        note: `已给 ${target_username} 授权 "${ability}"（by ${user?.username}）` };
+    }
+
+    case 'revoke_user_ability': {
+      const user = assertAbility(context, 'permissions.manage');
+      const { target_username, ability } = input;
+      if (!ABILITIES[ability]) {
+        throw new Error(`未定义的 ability "${ability}"`);
+      }
+      const removed = revokePermission(target_username, ability);
+      return { ok: true, target_username, ability, removed,
+        note: removed
+          ? `已撤销 ${target_username} 的 "${ability}"（角色 fallback 仍可能生效）`
+          : `${target_username} 没有显式授权 "${ability}"，无需撤销` };
+    }
+
+    case 'list_user_abilities': {
+      assertAbility(context, 'permissions.manage');
+      if (input.target_username) {
+        const grants = listUserPermissions(input.target_username);
+        return { target_username: input.target_username, grants,
+          note: `仅显式授权记录；角色 fallback 不显示在这里` };
+      }
+      const all = listAllPermissionGrants();
+      return { total: all.length, grants: all };
     }
 
     case 'get_deskhub_skill_file': {
