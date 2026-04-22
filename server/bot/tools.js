@@ -26,6 +26,11 @@ import {
 import db from '../db/init.js';
 import { createAndSendCard, uploadFileToFeishu, sendFileMessage } from './feishu.js';
 import { buildPersonalCard } from './card-templates.js';
+import {
+  loadUserMemory, saveUserMemory,
+  upsertSection, removeSection, appendNote,
+  checkSizeLimit, MEMORY_SIZE_SOFT_LIMIT, MEMORY_SIZE_HARD_LIMIT,
+} from './memory/index.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -265,6 +270,51 @@ export const TOOL_DEFINITIONS = [
   },
 
   // ========================================================
+  //  记忆工具（per-user markdown）
+  //  只在用户明确表达"记住/忘掉/改偏好"类意图时才写
+  //  Public 段 = 可能在群聊对任何人提起；Private 段 = 仅当前私聊使用
+  // ========================================================
+  {
+    name: 'update_memory_section',
+    description: '在你对当前用户的记忆里新建或更新一个命名段落。用于记录"画像/偏好/协作方式/通知习惯/进行中的关注"等软信息。**不要**记事实数据（工单状态/评分数值/人名等——去查 DB）。只在用户明确表达"记住/以后这样/我的偏好"时调用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', description: '段落标题（不含 ###，如"画像"、"协作偏好"、"通知偏好"）' },
+        content: { type: 'string', description: '段落正文，几行即可；保持精炼、抽象、可复用' },
+        segment: {
+          type: 'string', enum: ['public', 'private'],
+          description: 'public=群聊+私聊都可注入；private=仅私聊注入（群里永不泄露）。拿不准选 private',
+        },
+      },
+      required: ['section', 'content', 'segment'],
+    },
+  },
+  {
+    name: 'append_memory_note',
+    description: '在记忆里追加一条带日期的短笔记（≤30 字）。用于捕捉"今天他提到 X、他在跟进 Y"这类上下文锚点，不适合写进结构化段落的零散观察。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: '一行短笔记（≤30 字）' },
+        segment: { type: 'string', enum: ['public', 'private'] },
+      },
+      required: ['note', 'segment'],
+    },
+  },
+  {
+    name: 'forget_memory_section',
+    description: '删除记忆里的某个命名段落（同名的 public 和 private 段都会删）。仅在用户说"忘了那件事/别再记住 X"时用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', description: '要删除的段落标题' },
+      },
+      required: ['section'],
+    },
+  },
+
+  // ========================================================
   //  DeskHub 文件读取 + 飞书发附件
   // ========================================================
   {
@@ -293,8 +343,12 @@ export const TOOL_DEFINITIONS = [
   },
 ];
 
-// 闲聊工具集（未绑定用户）— 不含平台数据查询和通知
-export const TOOL_DEFINITIONS_CHAT_ONLY = [];
+// 闲聊工具集（未绑定用户）— 不含平台数据查询和通知，但允许写自己的 anon memory
+export const TOOL_DEFINITIONS_CHAT_ONLY = TOOL_DEFINITIONS.filter(t =>
+  t.name === 'update_memory_section' ||
+  t.name === 'append_memory_note' ||
+  t.name === 'forget_memory_section'
+);
 
 /**
  * 给 tool 数组的最后一项加 cache_control，使整个 tools 列表进入 prompt cache
@@ -567,6 +621,70 @@ async function runToolInternal(name, input, context) {
       }
       deleteScore(input.score_id);
       return { ok: true, score_id: input.score_id, note: '评分已删除' };
+    }
+
+    // ========================================================
+    //  记忆工具
+    // ========================================================
+    case 'update_memory_section': {
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = upsertSection(loaded.content, {
+        section: input.section,
+        body: input.content,
+        segment: input.segment || 'public',
+      });
+      const sz = checkSizeLimit(updated);
+      if (sz.overHard) {
+        return { ok: false, error: {
+          category: 'invalid_input',
+          message: `记忆超过硬上限 ${MEMORY_SIZE_HARD_LIMIT} 字节（当前 ${sz.sizeBytes}），请先调 forget_memory_section 删点再写`,
+          retryable: false, tool: name,
+        } };
+      }
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return {
+        ok: true, section: input.section, segment: input.segment || 'public',
+        sizeBytes: saved.sizeBytes, overSoft: saved.overSoft,
+        note: saved.overSoft
+          ? `已更新段落「${input.section}」（${input.segment||'public'}），**记忆超软上限 ${MEMORY_SIZE_SOFT_LIMIT} 字节，下次写入前建议先整理冗余**`
+          : `已更新段落「${input.section}」（${input.segment||'public'}）`,
+      };
+    }
+
+    case 'append_memory_note': {
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = appendNote(loaded.content, {
+        note: input.note,
+        segment: input.segment || 'public',
+      });
+      const sz = checkSizeLimit(updated);
+      if (sz.overHard) {
+        return { ok: false, error: {
+          category: 'invalid_input',
+          message: `记忆超过硬上限 ${MEMORY_SIZE_HARD_LIMIT} 字节，请先清理`,
+          retryable: false, tool: name,
+        } };
+      }
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return { ok: true, segment: input.segment || 'public', sizeBytes: saved.sizeBytes,
+        note: `已追加笔记到「${input.segment || 'public'}」段` };
+    }
+
+    case 'forget_memory_section': {
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = removeSection(loaded.content, { section: input.section });
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
+        note: `已忘记「${input.section}」段落` };
     }
 
     case 'get_deskhub_skill_file': {
