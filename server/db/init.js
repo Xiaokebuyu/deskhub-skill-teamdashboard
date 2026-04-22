@@ -155,6 +155,31 @@ try {
   console.warn('[db] feishu_open_id migration warning:', e.message);
 }
 
+// --- 迁移：patrol_config 键值表（R5，巡检/通知可控配置） ---
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS patrol_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  const DEFAULTS = [
+    ['patrol_hour',         String(process.env.BOT_PATROL_HOUR || 9)],
+    ['patrol_enabled',      '1'],
+    ['deadline_alert_days', '3'],
+    ['high_flush_ms',       String(process.env.BOT_HIGH_FLUSH_MS || 60000)],
+    ['normal_flush_ms',     String(process.env.BOT_NORMAL_FLUSH_MS || 600000)],
+    ['notify_chat_ids',     String(process.env.FEISHU_NOTIFY_CHAT_IDS || '')],
+  ];
+  // 只在 key 不存在时 INSERT，保留已有值
+  const seedStmt = db.prepare('INSERT OR IGNORE INTO patrol_config (key, value) VALUES (?, ?)');
+  for (const [k, v] of DEFAULTS) seedStmt.run(k, v);
+} catch (e) {
+  console.warn('[db] patrol_config migration warning:', e.message);
+}
+
 // --- 迁移：permissions 表（R1，ability 级权限扩展） ---
 // user_id × ability 唯一；assertAbility 查不到时 fallback 到 users.role 默认（见 bot/abilities.js）
 try {

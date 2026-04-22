@@ -398,6 +398,71 @@ export function bindFeishuUser(username, password, openId) {
 }
 
 // ============================================================
+//  巡检配置（R5）
+// ============================================================
+
+/** config 字段元信息——类型转换 + 校验 */
+const PATROL_CONFIG_SCHEMA = {
+  patrol_hour:         { type: 'int',    range: [0, 23],           label: '巡检触发小时（0-23）' },
+  patrol_enabled:      { type: 'int',    range: [0, 1],            label: '巡检开关（0=关，1=开）' },
+  deadline_alert_days: { type: 'int',    range: [1, 30],           label: 'deadline 预警阈值（天）' },
+  high_flush_ms:       { type: 'int',    range: [5000, 3600000],   label: '高优变更 flush 窗口（毫秒）' },
+  normal_flush_ms:     { type: 'int',    range: [10000, 86400000], label: '普通变更 flush 窗口（毫秒）' },
+  notify_chat_ids:     { type: 'string',                           label: '群通知目标 chat_id 列表（逗号分隔）' },
+};
+
+export const PATROL_CONFIG_KEYS = Object.keys(PATROL_CONFIG_SCHEMA);
+export { PATROL_CONFIG_SCHEMA };
+
+/** 读整个 config（值已转成目标类型） */
+export function getPatrolConfig() {
+  const rows = db.prepare('SELECT key, value FROM patrol_config').all();
+  const out = {};
+  for (const { key, value } of rows) {
+    const spec = PATROL_CONFIG_SCHEMA[key];
+    if (!spec) { out[key] = value; continue; }
+    out[key] = spec.type === 'int' ? Number(value) : value;
+  }
+  return out;
+}
+
+/** 读单 key（带类型转换） */
+export function getPatrolConfigValue(key) {
+  const row = db.prepare('SELECT value FROM patrol_config WHERE key = ?').get(key);
+  if (!row) return null;
+  const spec = PATROL_CONFIG_SCHEMA[key];
+  if (!spec) return row.value;
+  return spec.type === 'int' ? Number(row.value) : row.value;
+}
+
+/** 更新单 key（含类型/范围校验），返回 { ok, old, new } */
+export function setPatrolConfig(key, value) {
+  const spec = PATROL_CONFIG_SCHEMA[key];
+  if (!spec) throw new Error(`未知 patrol_config key "${key}"，合法值：${PATROL_CONFIG_KEYS.join(', ')}`);
+
+  let normalized;
+  if (spec.type === 'int') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      throw new Error(`${spec.label}：需要整数，收到 "${value}"`);
+    }
+    if (spec.range && (n < spec.range[0] || n > spec.range[1])) {
+      throw new Error(`${spec.label}：范围 ${spec.range[0]}-${spec.range[1]}，收到 ${n}`);
+    }
+    normalized = String(n);
+  } else {
+    normalized = String(value);
+  }
+
+  const old = getPatrolConfigValue(key);
+  db.prepare(`
+    INSERT INTO patrol_config (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `).run(key, normalized);
+  return { ok: true, key, old, new: spec.type === 'int' ? Number(normalized) : normalized };
+}
+
+// ============================================================
 //  ability 权限（R2）
 // ============================================================
 
