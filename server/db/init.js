@@ -219,6 +219,45 @@ try {
   console.warn('[db] proxy fields migration warning:', e.message);
 }
 
+// --- 迁移：notification_hooks 表（钩子驱动通知系统） ---
+// 每条钩子由 3 个来源产生（deadline/patrol/admin_verbal），pending_confirm → admin 批 → active → fired
+// 独立计数表 hook_id_counter 生成短 id（h001, h002...），方便 admin 口头取消
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_hooks (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT,
+      target_user TEXT NOT NULL,
+      fire_at TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_confirm'
+        CHECK(status IN ('pending_confirm', 'active', 'fired', 'cancelled', 'expired')),
+      source TEXT NOT NULL
+        CHECK(source IN ('deadline', 'patrol', 'admin_verbal')),
+      created_at TEXT DEFAULT (datetime('now')),
+      created_by TEXT NOT NULL,
+      confirmed_at TEXT,
+      confirmed_by TEXT,
+      fired_at TEXT,
+      reminder_count INTEGER NOT NULL DEFAULT 0,
+      last_reminded_at TEXT,
+      FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_hooks_status_fire ON notification_hooks(status, fire_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_hooks_plan ON notification_hooks(plan_id)');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hook_id_counter (
+      key TEXT PRIMARY KEY,
+      next_val INTEGER NOT NULL
+    )
+  `);
+  db.prepare('INSERT OR IGNORE INTO hook_id_counter (key, next_val) VALUES (?, ?)').run('hook', 1);
+} catch (e) {
+  console.warn('[db] notification_hooks migration warning:', e.message);
+}
+
 console.log(`[db] SQLite ready at ${DB_PATH}`);
 
 export default db;
