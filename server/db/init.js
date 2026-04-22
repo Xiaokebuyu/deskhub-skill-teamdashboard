@@ -155,6 +155,24 @@ try {
   console.warn('[db] feishu_open_id migration warning:', e.message);
 }
 
+// --- 迁移：permissions 表（R1，ability 级权限扩展） ---
+// user_id × ability 唯一；assertAbility 查不到时 fallback 到 users.role 默认（见 bot/abilities.js）
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS permissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      ability TEXT NOT NULL,
+      granted_at TEXT DEFAULT (datetime('now')),
+      granted_by TEXT DEFAULT '',
+      UNIQUE(user_id, ability)
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_permissions_user ON permissions(user_id)');
+} catch (e) {
+  console.warn('[db] permissions migration warning:', e.message);
+}
+
 // --- 迁移：plans / variants / scores 加代理身份字段（author_type / proxy_author_id / proxy_metadata）---
 // 用于标记"小合代笔"：author_type='ai' 且 proxy_author_id 记录委托者 username
 try {
