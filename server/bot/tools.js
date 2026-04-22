@@ -19,6 +19,7 @@ import {
   createPlan, editPlan, addVariant, editVariant, deleteVariant,
   submitScores, editScore, deleteScore, appendVariantFiles,
   grantPermission, revokePermission, listUserPermissions, listAllPermissionGrants,
+  getPatrolConfig, setPatrolConfig, PATROL_CONFIG_KEYS, PATROL_CONFIG_SCHEMA,
 } from '../mcp/db-ops.js';
 import {
   listDeskhubSkills, getDeskhubSkill, fetchDeskhubFile,
@@ -317,6 +318,27 @@ export const TOOL_DEFINITIONS = [
   },
 
   // ========================================================
+  //  巡检配置工具（patrol.config）
+  // ========================================================
+  {
+    name: 'get_patrol_config',
+    description: '读取当前巡检/通知配置（patrol_hour/patrol_enabled/deadline_alert_days/flush 窗口/通知群 ids）。用户问"巡检几点触发"、"到期预警阈值"时用。',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'update_patrol_config',
+    description: '修改巡检/通知配置的某一项。合法 key：patrol_hour（0-23）/patrol_enabled（0/1）/deadline_alert_days（1-30）/high_flush_ms（5000-3600000）/normal_flush_ms（10000-86400000）/notify_chat_ids（逗号分隔）。热生效项：patrol_hour / patrol_enabled / deadline_alert_days / notify_chat_ids，flush_ms 改后需 pm2 restart。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: '配置键名' },
+        value: { description: '新值（整数传数字，notify_chat_ids 传字符串）' },
+      },
+      required: ['key', 'value'],
+    },
+  },
+
+  // ========================================================
   //  权限管理工具（permissions.manage）
   // ========================================================
   {
@@ -449,7 +471,9 @@ function classifyError(err, toolName) {
   if (msg.includes('必填') || msg.includes('不存在') ||
       msg.includes('未找到') || msg.includes('超过') ||
       msg.includes('内容为空') || msg.startsWith('未知工具') ||
-      msg.includes('未绑定飞书')) {
+      msg.includes('未绑定飞书') || msg.includes('需要整数') ||
+      msg.includes('范围') || msg.includes('未知 patrol_config key') ||
+      msg.includes('合法值：')) {
     return { category: 'invalid_input', retryable: true };
   }
 
@@ -713,6 +737,33 @@ async function runToolInternal(name, input, context) {
       const saved = await saveUserMemory(openId, boundUser, updated);
       return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
         note: `已忘记「${input.section}」段落` };
+    }
+
+    // ========================================================
+    //  巡检配置工具
+    // ========================================================
+    case 'get_patrol_config': {
+      assertAbility(context, 'patrol.config');
+      const cfg = getPatrolConfig();
+      return {
+        ...cfg,
+        _schema: Object.fromEntries(
+          Object.entries(PATROL_CONFIG_SCHEMA).map(([k, s]) => [k, { type: s.type, range: s.range, label: s.label }])
+        ),
+        _note: 'flush_ms 改后需 pm2 restart 才生效；其他热生效',
+      };
+    }
+
+    case 'update_patrol_config': {
+      const user = assertAbility(context, 'patrol.config');
+      const { key, value } = input;
+      const result = setPatrolConfig(key, value);
+      const hotReload = ['patrol_hour', 'patrol_enabled', 'deadline_alert_days', 'notify_chat_ids'].includes(key);
+      return {
+        ok: true, key, old: result.old, new: result.new,
+        hotReload,
+        note: `${PATROL_CONFIG_SCHEMA[key]?.label || key} 已改为 ${result.new}（by ${user?.username}）${hotReload ? '，立即生效' : '，需要 pm2 restart 生效'}`,
+      };
     }
 
     // ========================================================
