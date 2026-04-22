@@ -35,6 +35,9 @@ import {
   checkSizeLimit, MEMORY_SIZE_SOFT_LIMIT, MEMORY_SIZE_HARD_LIMIT,
 } from './memory/index.js';
 import { assertAbility, checkAbility, ABILITIES, ABILITY_NAMES } from './abilities.js';
+import { getActiveSessionCount } from './session.js';
+import { getConcurrencyMetrics } from './concurrency.js';
+import { beijingNowLine } from '../utils/time.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -316,6 +319,15 @@ export const TOOL_DEFINITIONS = [
       },
       required: ['section'],
     },
+  },
+
+  // ========================================================
+  //  系统健康检查（system.health）
+  // ========================================================
+  {
+    name: 'get_system_health',
+    description: '查看服务器健康指标：Node 进程（memory/uptime/cpu）+ 工作台基本统计（工单数/近24h变更/active session）+ 并发状态。用户问"服务器状态"、"系统还好吗"、"现在负载如何"时用。',
+    input_schema: { type: 'object', properties: {} },
   },
 
   // ========================================================
@@ -779,6 +791,46 @@ async function runToolInternal(name, input, context) {
       const saved = await saveUserMemory(openId, boundUser, updated);
       return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
         note: `已忘记「${input.section}」段落` };
+    }
+
+    // ========================================================
+    //  系统健康检查
+    // ========================================================
+    case 'get_system_health': {
+      assertAbility(context, 'system.health');
+      const mem = process.memoryUsage();
+      const mb = (n) => Math.round(n / 1024 / 1024 * 10) / 10;
+      const cpu = process.cpuUsage();
+
+      const planStats = db.prepare(`
+        SELECT status, COUNT(*) AS c FROM plans GROUP BY status
+      `).all();
+      const planCount = { total: 0, next: 0, active: 0, done: 0 };
+      for (const { status, c } of planStats) {
+        planCount[status] = c;
+        planCount.total += c;
+      }
+
+      const changes24h = db.prepare(`
+        SELECT COUNT(*) AS c FROM change_log WHERE datetime(created_at) >= datetime('now', '-1 day')
+      `).get().c;
+
+      return {
+        node: {
+          uptimeSeconds: Math.round(process.uptime()),
+          memoryMB: { rss: mb(mem.rss), heapUsed: mb(mem.heapUsed), heapTotal: mb(mem.heapTotal), external: mb(mem.external) },
+          cpuUserMs: Math.round(cpu.user / 1000),
+          cpuSystemMs: Math.round(cpu.system / 1000),
+          nodeVersion: process.version,
+        },
+        workbench: {
+          planCount,
+          changesLast24h: changes24h,
+          activeSessions: getActiveSessionCount(),
+        },
+        concurrency: getConcurrencyMetrics(),
+        now: beijingNowLine(),
+      };
     }
 
     // ========================================================

@@ -124,6 +124,13 @@ export function updateSession(userId, userText, replyText, toolSummaries = []) {
 }
 
 /**
+ * 给 get_system_health 工具用：返回当前 session 数
+ */
+export function getActiveSessionCount() {
+  return sessions.size;
+}
+
+/**
  * 测试/调试用：手动强制蒸馏某个 session（不等 TTL）
  */
 export function forceDistill(userId) {

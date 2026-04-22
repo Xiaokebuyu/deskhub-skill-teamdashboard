@@ -82,3 +82,16 @@ export async function enqueueMessage(userId, task) {
     }
   }
 }
+
+/** 给 get_system_health 工具用：返回当前并发指标 */
+export function getConcurrencyMetrics() {
+  return {
+    running,
+    maxConcurrent: MAX_CONCURRENT,
+    waitingForSemaphore: waitQueue.length,
+    perUserQueueDepth: Object.fromEntries(
+      [...queueDepth.entries()].map(([u, d]) => [u.slice(0, 8) + '...', d])
+    ),
+    maxQueueDepth: MAX_QUEUE_DEPTH,
+  };
+}
