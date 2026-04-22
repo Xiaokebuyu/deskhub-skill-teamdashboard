@@ -168,9 +168,12 @@ function queryDeadlineAlerts() {
 }
 
 function addDaysBeijing(ymd, n) {
-  const d = new Date(`${ymd}T00:00:00+08:00`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  // 避免"用 +08:00 解析 → toISOString 取 UTC 切片"导致输出日期偏后 1 天。
+  // 纯字符串拆开用 Date.UTC 构造，+ n 天仍在 UTC 空间，切片回来即北京日期。
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
 }
 
 function dayDiffBeijing(fromYmd, toYmd) {
