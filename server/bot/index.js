@@ -71,7 +71,9 @@ export async function startBot() {
   const chatRounds = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
   const notifyRounds = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
   const toolTimeout = Number(process.env.BOT_TOOL_TIMEOUT_MS) || 30000;
-  console.log(`[Bot] chatMaxRounds=${chatRounds} notifyMaxRounds=${notifyRounds} toolTimeoutMs=${toolTimeout}`);
+  const sessionTtl = Number(process.env.BOT_SESSION_TTL_MS) || 30 * 60 * 1000;
+  const distillRounds = Number(process.env.BOT_DISTILL_MAX_ROUNDS) || 3;
+  console.log(`[Bot] chatMaxRounds=${chatRounds} notifyMaxRounds=${notifyRounds} toolTimeoutMs=${toolTimeout} sessionTtlMin=${sessionTtl/60000} distillMaxRounds=${distillRounds}`);
 
   startSessionCleanup();
 
