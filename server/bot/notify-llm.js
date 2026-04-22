@@ -12,7 +12,8 @@
 
 import { TOOL_DEFINITIONS, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop } from './agent-loop.js';
-import { beijingNowLine } from '../utils/time.js';
+import { beijingNowLine, formatBeijingNow } from '../utils/time.js';
+import db from '../db/init.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
 const MAX_TOKENS = 4096;
@@ -73,13 +74,58 @@ function buildNotifyPrompt(changes) {
   };
 }
 
+/**
+ * 预查本地 DB 里 deadline 临近（≤3 天）或已逾期的活跃工单，喂给 LLM 做巡检决策。
+ * 北京时间 endOfDay 语义：YYYY-MM-DD 当天 23:59+08 之前都不算逾期。
+ */
+function queryDeadlineAlerts() {
+  const { today } = formatBeijingNow();
+  // SQLite 里把 deadline 当 YYYY-MM-DD 文本比较即可（同格式字典序 = 日期序）
+  const plus3 = addDaysBeijing(today, 3);
+  const rows = db.prepare(`
+    SELECT id, name, owner, deadline, priority, status
+    FROM plans
+    WHERE status IN ('next','active')
+      AND deadline != ''
+      AND deadline <= ?
+    ORDER BY deadline ASC
+  `).all(plus3);
+
+  return rows.map(r => {
+    const daysLeft = dayDiffBeijing(today, r.deadline);
+    const tag = daysLeft < 0 ? `已逾期 ${-daysLeft} 天`
+             : daysLeft === 0 ? '今日到期'
+             : `剩 ${daysLeft} 天`;
+    return { ...r, daysLeft, tag };
+  });
+}
+
+function addDaysBeijing(ymd, n) {
+  const d = new Date(`${ymd}T00:00:00+08:00`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function dayDiffBeijing(fromYmd, toYmd) {
+  const a = new Date(`${fromYmd}T00:00:00+08:00`).getTime();
+  const b = new Date(`${toYmd}T00:00:00+08:00`).getTime();
+  return Math.round((b - a) / (24 * 3600 * 1000));
+}
+
 function buildPatrolPrompt() {
+  const alerts = queryDeadlineAlerts();
+  const alertBlock = alerts.length === 0
+    ? '（无临近或逾期工单）'
+    : alerts.map(a =>
+      `- [${a.priority}] ${a.name}（${a.id}）— ${a.tag}，负责人：${a.owner || '未指定'}，状态：${a.status}`
+    ).join('\n');
+
   const staticSystem = `你是小合，DeskSkill TeamBoard 的协作中枢。现在是每日巡检时间，你需要扫描平台状态，发现异常。
 
 ## 巡检要点
 用工具查询所有工单和团队成员，检查以下异常：
 - 高优先级工单待开始超过 5 天
-- 截止日期临近（≤3天）但进度不足
+- **截止日期相关**：下方已预先附上 DB 查询结果，优先据此提醒相关负责人
 - 评分全到齐，可以定稿（提醒管理员）
 - 活跃工单只有 1 个方案（征集不够）
 - 某方案提交超过 5 天没有评分
@@ -96,12 +142,14 @@ function buildPatrolPrompt() {
 一切正常 → { "group": { "send": false }, "individuals": [], "reasoning": "无异常" }
 只有值得关注的异常才通知。不要把正常状态当异常。`;
 
+  const deadlineHint = `\n\n## 截止日期预警（DB 查询结果，北京时间 endOfDay）\n${alertBlock}`;
+
   return {
     system: [
       { type: 'text', text: staticSystem, cache_control: { type: 'ephemeral' } },
-      { type: 'text', text: `\n\n${beijingNowLine()}` },
+      { type: 'text', text: `\n\n${beijingNowLine()}${deadlineHint}` },
     ],
-    user: '请执行每日巡检。先用工具查询所有工单状态和团队成员，然后分析是否有需要关注的异常。',
+    user: '请执行每日巡检。先用工具查询所有工单状态和团队成员，然后分析是否有需要关注的异常；截止预警已在 system 里给出。',
   };
 }
 
