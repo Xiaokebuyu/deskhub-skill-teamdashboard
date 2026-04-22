@@ -18,6 +18,9 @@ import { loadUserMemory } from './index.js';
 
 const DISTILL_MAX_ROUNDS = Number(process.env.BOT_DISTILL_MAX_ROUNDS) || 3;
 const DISTILL_MAX_TOKENS = 2048;
+// 蒸馏输入截断：只取最后 N 条 session 消息。session.js MAX_ROUNDS=50（100 条），
+// 全部 concat 成 transcript 可能几十 KB，成本 / 蒸馏质量都退化。取尾部够捕捉近期画像。
+const DISTILL_MAX_INPUT_MESSAGES = 40;
 
 // 仅白名单 memory 工具
 const MEMORY_TOOL_NAMES = new Set([
@@ -84,13 +87,17 @@ export async function distillSession(openId, messages) {
   const system = buildDistillPrompt(openId, boundUser, existingMemory);
 
   // 把对话压成一段文本作为 user message（不让 LLM 误以为在继续对话）
-  const transcript = messages.map((m, i) => {
+  const tail = messages.slice(-DISTILL_MAX_INPUT_MESSAGES);
+  const transcript = tail.map((m) => {
     const role = m.role === 'user' ? '用户' : '小合';
     const text = Array.isArray(m.content)
       ? m.content.filter(b => b.type === 'text').map(b => b.text).join(' ')
       : String(m.content || '');
     return `${role}：${text}`;
   }).join('\n');
+  const truncatedNote = messages.length > tail.length
+    ? `（为控制 token，仅展示最近 ${tail.length}/${messages.length} 条消息）\n\n`
+    : '';
 
   // 只暴露 memory 工具
   const memoryTools = TOOL_DEFINITIONS.filter(t => MEMORY_TOOL_NAMES.has(t.name));
@@ -101,12 +108,14 @@ export async function distillSession(openId, messages) {
     maxRounds: DISTILL_MAX_ROUNDS,
     buildSystem: () => system,
     initialMessages: [
-      { role: 'user', content: `以下是要蒸馏的对话历史（按时序）：\n\n${transcript}` },
+      { role: 'user', content: `${truncatedNote}以下是要蒸馏的对话历史（按时序）：\n\n${transcript}` },
     ],
     tools: withToolsCache(memoryTools),
-    executeTool: (name, input) => executeTool(name, input, {
+    // opts 由 agent-loop 的 runToolWithTimeout 传入（含 signal），合并进 context 透传
+    executeTool: (name, input, opts = {}) => executeTool(name, input, {
       boundUser,
       chatContext: { openId, chatType: 'p2p' },  // 蒸馏场景视同私聊（能写 Private）
+      ...opts,
     }),
   });
 
