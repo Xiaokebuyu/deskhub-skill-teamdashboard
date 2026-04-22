@@ -30,8 +30,8 @@ import {
 } from './feishu.js';
 import { chat } from './llm.js';
 import { getSession, updateSession, startSessionCleanup } from './session.js';
-import { startChangeDetector } from './change-detector.js';
 import { startPatrol } from './patrol.js';
+import { startHookScheduler } from './hook-scheduler.js';
 import { enqueueMessage } from './concurrency.js';
 import { getUserByOpenId, bindFeishuUser } from '../mcp/db-ops.js';
 import {
@@ -80,13 +80,13 @@ export async function startBot() {
 
   const feishuReady = await initFeishu(handleMessage);
 
-  startChangeDetector();
   startPatrol();
+  startHookScheduler();
 
   if (feishuReady) {
     console.log('[Bot] 飞书机器人已启动');
   } else {
-    console.log('[Bot] 变更检测已启动（飞书未配置，消息功能不可用）');
+    console.log('[Bot] 巡检/钩子调度已启动（飞书未配置，消息功能不可用）');
   }
 }
 

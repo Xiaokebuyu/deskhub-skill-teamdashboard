@@ -7,20 +7,18 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import db from '../db/init.js';
-import { bus } from '../bot/event-bus.js';
 
 const uid = () => crypto.randomUUID().slice(0, 8);
 
 // ============================================================
-//  变更日志（飞书推送用）
+//  变更日志（审计用）
+// 2026-04-22 改造后：只写 DB 不再 bus.emit。通知走钩子系统，不再听变更
 // ============================================================
 
 export function logChange(entityType, entityId, action, summary, actor = '', priority = 'medium') {
   db.prepare(
     'INSERT INTO change_log (entity_type, entity_id, action, summary, actor, priority) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(entityType, entityId, action, summary, actor, priority);
-
-  bus.emit('change', { entityType, entityId, action, summary, actor, priority });
 }
 
 export function getRecentChanges(limit = 20) {
@@ -102,7 +100,6 @@ const deletePlanTx = db.transaction((planId) => {
 
 export function deletePlan(planId) {
   const plan = deletePlanTx(planId);
-  // logChange 必须在事务外：内部 bus.emit 同步派发，事务内派发的话监听者查不到已提交数据
   if (plan) logChange('plan', planId, 'deleted', `删除工单「${plan.name}」`, '', plan.priority);
 }
 
