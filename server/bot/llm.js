@@ -20,6 +20,7 @@
 
 import { TOOL_DEFINITIONS, TOOL_DEFINITIONS_CHAT_ONLY, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop, ERROR_TEXT } from './agent-loop.js';
+import { beijingNowLine } from '../utils/time.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
 const MAX_TOKENS = 8192;
@@ -368,11 +369,7 @@ Markdown 表格和块级 markup（\`[[plan:...]]\` / \`[[skill:...]]\` / \`[[mcp
  * 构建 system prompt（数组形式，前段静态可缓存，后段动态）
  */
 function buildSystem(boundUser, toolLog) {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const nowMs = now.getTime();
-
-  let dynamicSuffix = `\n\n## 当前上下文\n时间：${today}（毫秒时间戳 ${nowMs}）`;
+  let dynamicSuffix = `\n\n## 当前上下文\n${beijingNowLine()}`;
 
   if (toolLog && toolLog.length > 0) {
     dynamicSuffix += `\n\n## 本次会话的工具调用记录\n${toolLog.map(l => `- ${l}`).join('\n')}\n这些是你在之前轮次中调用过的工具，结果已反映在历史回复中。`;

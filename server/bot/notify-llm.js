@@ -12,6 +12,7 @@
 
 import { TOOL_DEFINITIONS, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop } from './agent-loop.js';
+import { beijingNowLine } from '../utils/time.js';
 
 const MAX_TOOL_ROUNDS = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
 const MAX_TOKENS = 4096;
@@ -22,10 +23,6 @@ const THINKING_BUDGET = 1500;
 // ============================================================
 
 function buildNotifyPrompt(changes) {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const nowMs = now.getTime();
-
   const changeList = changes.map(c =>
     `- [${c.priority}] ${c.action} | ${c.entityType}:${c.entityId} | ${c.summary} | actor: ${c.actor || '未知'}`
   ).join('\n');
@@ -64,7 +61,7 @@ function buildNotifyPrompt(changes) {
 如果这批变更不值得通知任何人：
 { "group": { "send": false }, "individuals": [], "reasoning": "..." }`;
 
-  const dynamic = `\n\n当前时间：${today}（毫秒时间戳 ${nowMs}）。`;
+  const dynamic = `\n\n${beijingNowLine()}`;
   const userMsg = `以下是待处理的变更批次：\n\n${changeList}\n\n请分析这些变更，决定通知策略。先用工具查询相关工单详情和团队成员，再做决策。`;
 
   return {
@@ -77,10 +74,6 @@ function buildNotifyPrompt(changes) {
 }
 
 function buildPatrolPrompt() {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const nowMs = now.getTime();
-
   const staticSystem = `你是小合，DeskSkill TeamBoard 的协作中枢。现在是每日巡检时间，你需要扫描平台状态，发现异常。
 
 ## 巡检要点
@@ -106,17 +99,13 @@ function buildPatrolPrompt() {
   return {
     system: [
       { type: 'text', text: staticSystem, cache_control: { type: 'ephemeral' } },
-      { type: 'text', text: `\n\n当前时间：${today}（毫秒时间戳 ${nowMs}）。` },
+      { type: 'text', text: `\n\n${beijingNowLine()}` },
     ],
     user: '请执行每日巡检。先用工具查询所有工单状态和团队成员，然后分析是否有需要关注的异常。',
   };
 }
 
 function buildRelayPrompt(callerUsername) {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const nowMs = now.getTime();
-
   const staticSystem = `你是小合，DeskSkill TeamBoard 的协作中枢。
 
 你收到了一个任务请求。理解意图后执行：
@@ -132,7 +121,7 @@ function buildRelayPrompt(callerUsername) {
 
   return [
     { type: 'text', text: staticSystem, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: `\n\n当前时间：${today}（毫秒时间戳 ${nowMs}）。\n调用者：${callerUsername}` },
+    { type: 'text', text: `\n\n${beijingNowLine()}\n调用者：${callerUsername}` },
   ];
 }
 
