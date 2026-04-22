@@ -234,8 +234,10 @@ export async function runAgentLoop(opts) {
   }
 
   // 轮数耗尽
+  const tail = toolSummaries.slice(-3).join('\n');
+  const hint = tail ? `\n\n最近尝试：\n${tail}` : '';
   return {
-    text: '查询过程过于复杂，请尝试更简单的问题。',
+    text: `查询过程过于复杂，请尝试更简单的问题。${hint}`,
     toolSteps,
     toolSummaries,
     exhausted: true,

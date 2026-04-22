@@ -6,7 +6,7 @@
  *   - 流式（text + thinking + input_json）
  *   - 交错思考（interleaved-thinking-2025-05-14 beta 头）：模型可在多轮工具调用之间持续推理
  *   - prompt caching：静态 system prompt + tools 入 cache（5min TTL，命中价 ×0.1）
- *   - 8 轮 tool use 上限
+ *   - tool use 轮数上限：默认 20，可通过 BOT_CHAT_MAX_ROUNDS 环境变量覆盖
  *
  * 进度事件回调（onProgress）：
  *   { type: 'text_chunk',     delta, round }
@@ -21,7 +21,7 @@
 import { TOOL_DEFINITIONS, TOOL_DEFINITIONS_CHAT_ONLY, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop, ERROR_TEXT } from './agent-loop.js';
 
-const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_ROUNDS = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
 const MAX_TOKENS = 8192;
 const THINKING_BUDGET = 2000;   // thinking token 预算（不计入 max_tokens）
 

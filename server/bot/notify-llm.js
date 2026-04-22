@@ -13,7 +13,7 @@
 import { TOOL_DEFINITIONS, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop } from './agent-loop.js';
 
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
 const MAX_TOKENS = 4096;
 const THINKING_BUDGET = 1500;
 
