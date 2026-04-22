@@ -55,6 +55,7 @@ import {
   HEADER_TEMPLATES,
 } from './_probe-cards.js';
 import { shouldDegrade, summarizeDegrade, logDegrade, buildDegradeCard } from './degrade.js';
+import { migrateAnonToUser } from './memory/index.js';
 
 const THROTTLE_MS = 300;
 const FLUSH_AT_CHARS = 30;
@@ -883,6 +884,13 @@ async function handleMessage(text, chatId, userId, chatType) {
     const [, username, password] = bindMatch;
     const result = bindFeishuUser(username, password, userId);
     if (result.ok) {
+      // 绑定成功 → 迁移 anon memory 到 user memory（失败不阻塞绑定反馈）
+      try {
+        const mig = await migrateAnonToUser(userId, username);
+        if (mig.migrated) console.log(`[Bot/Memory] anon→user 迁移: ${mig.from} → ${mig.to}`);
+      } catch (err) {
+        console.warn('[Bot/Memory] 绑定时 anon→user 迁移失败:', err.message);
+      }
       await createAndSendCard(receiveId, receiveIdType,
         buildSimpleCard(`绑定成功！你好 ${result.displayName}，以后工单有动态我会通知你。`,
           { level: 'success' }));
