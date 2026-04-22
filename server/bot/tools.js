@@ -38,6 +38,11 @@ import { assertAbility, checkAbility, ABILITIES, ABILITY_NAMES } from './abiliti
 import { getActiveSessionCount } from './session.js';
 import { getConcurrencyMetrics } from './concurrency.js';
 import { beijingNowLine } from '../utils/time.js';
+import {
+  proposeHook, confirmHook, modifyHook, cancelHook,
+  listHooks, fuzzyMatchHook, getHookById,
+} from '../mcp/hooks-ops.js';
+import { addHookToScheduler, removeHookFromScheduler } from './hook-scheduler.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -426,6 +431,74 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         target_username: { type: 'string', description: '留空则返回所有 grant 记录' },
+      },
+    },
+  },
+
+  // ========================================================
+  //  通知钩子（hook.propose / hook.manage）
+  //  钩子驱动通知：所有通知都是 admin 点过头的、指定时间触发的 DM
+  //  3 种来源：工单 deadline 自估 / admin 口头 / 每日巡检扫异常
+  // ========================================================
+  {
+    name: 'propose_notification_hook',
+    description: '提议一个新通知钩子。**适用场景**：(a) 用户/admin 创建带 deadline 的工单后，你判断要不要提醒 owner（默认前 1 天上午 9 点）；(b) admin 口头说"X 时间提醒 Y"（admin 本人提议可直接 active，不走确认）；(c) 巡检扫到异常。\n\n**不走确认流程**（直接 active）当且仅当 initial_status="active" 且调用者本人是 admin。\n\n系统会自动：生成短 id（h00x）、保 pending_confirm 写 DB、DM admin 发确认请求。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_user: { type: 'string', description: '被提醒的 username（必须在 users 表里）' },
+        fire_at: { type: 'string', description: '触发时间 ISO 8601，必须带 +08:00（如 "2026-04-25T09:00:00+08:00"）' },
+        message: { type: 'string', description: '给 target 发的消息正文（简短、友好、有上下文）' },
+        source: { type: 'string', enum: ['deadline', 'patrol', 'admin_verbal'], description: '钩子来源' },
+        plan_id: { type: 'string', description: '关联的工单 id（可空，如 admin 口头挂个一次性提醒）' },
+        initial_status: { type: 'string', enum: ['pending_confirm', 'active'], description: 'admin 口头发起可传 active 跳过确认；系统/LLM 生成必须用默认 pending_confirm' },
+      },
+      required: ['target_user', 'fire_at', 'message', 'source'],
+    },
+  },
+  {
+    name: 'confirm_notification_hook',
+    description: '确认一个 pending_confirm 钩子让它变成 active，到点会真发 DM。admin 说"h007 行"/"确认 h007"时调用。',
+    input_schema: {
+      type: 'object',
+      properties: { hook_id: { type: 'string', description: '钩子短 id，如 h007' } },
+      required: ['hook_id'],
+    },
+  },
+  {
+    name: 'modify_notification_hook',
+    description: '修改钩子的 fire_at / message / target_user。admin 说"h007 改成前 3 天提醒"/"改成下周一"/"改成让张三"时调用。仅 pending_confirm 和 active 可改。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hook_id: { type: 'string' },
+        fire_at: { type: 'string', description: 'ISO 8601 带 +08:00' },
+        message: { type: 'string' },
+        target_user: { type: 'string' },
+      },
+      required: ['hook_id'],
+    },
+  },
+  {
+    name: 'cancel_notification_hook',
+    description: '取消钩子。两种用法：(1) 精确：传 hook_id="h007"。(2) 模糊：传 target_user 或 plan_id 或 date_ymd（YYYY-MM-DD），返回候选让 admin 二次确认，admin 定了具体 id 再调一次精确取消。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hook_id: { type: 'string', description: '精确取消' },
+        target_user: { type: 'string', description: '模糊候选：按被提醒对象' },
+        plan_id: { type: 'string', description: '模糊候选：按工单' },
+        date_ymd: { type: 'string', description: '模糊候选：按 fire_at 的日期 YYYY-MM-DD' },
+      },
+    },
+  },
+  {
+    name: 'list_notification_hooks',
+    description: '列出钩子。不传 filter 返回 pending_confirm + active 全部；传 status 过滤。admin 问"待确认的钩子还有哪些"/"我挂的所有钩子"时用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['pending_confirm', 'active', 'fired', 'cancelled', 'expired'] },
       },
     },
   },
@@ -933,6 +1006,150 @@ async function runToolInternal(name, input, context) {
       }
       const all = listAllPermissionGrants();
       return { total: all.length, grants: all };
+    }
+
+    // ========================================================
+    //  通知钩子工具
+    // ========================================================
+    case 'propose_notification_hook': {
+      const user = assertAbility(context, 'hook.propose');
+      const { target_user, fire_at, message, source, plan_id, initial_status } = input;
+
+      // 校验 target 存在
+      const tgt = db.prepare('SELECT username FROM users WHERE username = ?').get(target_user);
+      if (!tgt) throw new Error(`目标用户 ${target_user} 不存在`);
+
+      // 校验 fire_at 是未来时间
+      const fireMs = new Date(fire_at).getTime();
+      if (!Number.isFinite(fireMs)) throw new Error(`fire_at 非法时间戳：${fire_at}`);
+      if (fireMs <= Date.now()) throw new Error(`fire_at 必须是未来时间（收到 ${fire_at}）`);
+
+      // 只有 admin 本人提议才能直接 active；LLM 代笔 / 系统巡检必须走 pending_confirm
+      let status = initial_status || 'pending_confirm';
+      if (status === 'active' && user?.role !== 'admin') {
+        status = 'pending_confirm';
+      }
+
+      const hook = proposeHook({
+        planId: plan_id || null,
+        targetUser: target_user,
+        fireAt: fire_at,
+        message,
+        source,
+        createdBy: user?.username || 'ai',
+        initialStatus: status,
+      });
+
+      if (status === 'active') addHookToScheduler(hook.id);
+
+      return {
+        ok: true,
+        hook_id: hook.id,
+        status: hook.status,
+        note: status === 'active'
+          ? `钩子 ${hook.id} 已直接激活（admin 本人提议），将在 ${fire_at} DM ${target_user}`
+          : `钩子 ${hook.id} 已提议，待 admin 确认后才会真发。DM admin 的确认请求由你下一步用 send_notification 发（或用户下次跟小合说话会看到 memory 里的 pending 列表）`,
+      };
+    }
+
+    case 'confirm_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id } = input;
+      const hook = getHookById(hook_id);
+      if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+      if (hook.status !== 'pending_confirm') {
+        return { ok: false, hook_id, status: hook.status, note: `钩子 ${hook_id} 当前状态 ${hook.status}，不是 pending_confirm，无需确认` };
+      }
+      const ok = confirmHook(hook_id, user?.username || 'admin');
+      if (ok) addHookToScheduler(hook_id);
+      return { ok, hook_id, status: 'active', note: `钩子 ${hook_id} 已激活，将在 ${hook.fire_at} DM ${hook.target_user}` };
+    }
+
+    case 'modify_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id, fire_at, message, target_user } = input;
+      const hook = getHookById(hook_id);
+      if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+      if (!['pending_confirm', 'active'].includes(hook.status)) {
+        throw new Error(`钩子 ${hook_id} 当前状态 ${hook.status}，不可修改`);
+      }
+
+      const fields = {};
+      if (fire_at !== undefined) {
+        const fireMs = new Date(fire_at).getTime();
+        if (!Number.isFinite(fireMs)) throw new Error(`fire_at 非法：${fire_at}`);
+        if (fireMs <= Date.now()) throw new Error(`fire_at 必须是未来时间`);
+        fields.fire_at = fire_at;
+      }
+      if (message !== undefined) fields.message = message;
+      if (target_user !== undefined) {
+        const tgt = db.prepare('SELECT username FROM users WHERE username = ?').get(target_user);
+        if (!tgt) throw new Error(`目标用户 ${target_user} 不存在`);
+        fields.target_user = target_user;
+      }
+      if (Object.keys(fields).length === 0) throw new Error('没有提供可改字段');
+
+      modifyHook(hook_id, fields);
+
+      // active 状态下改 fire_at 要重挂 timer
+      if (hook.status === 'active' && fields.fire_at !== undefined) {
+        removeHookFromScheduler(hook_id);
+        addHookToScheduler(hook_id);
+      }
+
+      const updated = getHookById(hook_id);
+      return { ok: true, hook_id, status: updated.status, updated: fields,
+        note: `钩子 ${hook_id} 已更新（by ${user?.username}）` };
+    }
+
+    case 'cancel_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id, target_user, plan_id, date_ymd } = input;
+
+      // 精确模式
+      if (hook_id) {
+        const hook = getHookById(hook_id);
+        if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+        if (!['pending_confirm', 'active'].includes(hook.status)) {
+          return { ok: false, hook_id, status: hook.status, note: `钩子 ${hook_id} 当前状态 ${hook.status}，无需取消` };
+        }
+        cancelHook(hook_id);
+        removeHookFromScheduler(hook_id);
+        return { ok: true, hook_id, status: 'cancelled', note: `钩子 ${hook_id} 已取消（by ${user?.username}）` };
+      }
+
+      // 模糊候选
+      if (!target_user && !plan_id && !date_ymd) {
+        throw new Error('需要 hook_id 精确取消，或提供 target_user/plan_id/date_ymd 做模糊候选');
+      }
+      const candidates = fuzzyMatchHook({ targetUser: target_user, planId: plan_id, dateYmd: date_ymd });
+      return {
+        ok: false,
+        mode: 'fuzzy_candidates',
+        candidates: candidates.map(c => ({
+          hook_id: c.id, target_user: c.target_user, fire_at: c.fire_at,
+          message: c.message, status: c.status, plan_id: c.plan_id,
+        })),
+        note: candidates.length === 0
+          ? '没有匹配的钩子'
+          : `找到 ${candidates.length} 个候选，请让用户指定具体 hook_id 再精确取消`,
+      };
+    }
+
+    case 'list_notification_hooks': {
+      assertAbility(context, 'hook.manage');
+      if (input.status) {
+        const hooks = listHooks({ status: input.status });
+        return { total: hooks.length, hooks };
+      }
+      const pending = listHooks({ status: 'pending_confirm' });
+      const active = listHooks({ status: 'active' });
+      return {
+        pending_count: pending.length,
+        active_count: active.length,
+        pending,
+        active,
+      };
     }
 
     case 'get_deskhub_skill_file': {

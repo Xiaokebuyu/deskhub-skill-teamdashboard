@@ -24,6 +24,9 @@ export const ABILITIES = {
   'dimension.crud':     { fallbackRoles: ['admin'] },
   'system.health':      { fallbackRoles: ['admin'] },
   'permissions.manage': { fallbackRoles: ['admin'] },
+  // 钩子驱动通知系统（2026-04-22 接入）
+  'hook.propose':       { fallbackRoles: ['admin'] },   // 提议新钩子（admin 自己/LLM 代 admin 触发）
+  'hook.manage':        { fallbackRoles: ['admin'] },   // confirm/modify/cancel/list
 };
 
 /** 所有合法 ability 名（工具参数校验用） */
