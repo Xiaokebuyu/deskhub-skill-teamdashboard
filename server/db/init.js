@@ -169,13 +169,15 @@ try {
     ['patrol_hour',         String(process.env.BOT_PATROL_HOUR || 9)],
     ['patrol_enabled',      '1'],
     ['deadline_alert_days', '3'],
-    ['high_flush_ms',       String(process.env.BOT_HIGH_FLUSH_MS || 60000)],
-    ['normal_flush_ms',     String(process.env.BOT_NORMAL_FLUSH_MS || 600000)],
-    ['notify_chat_ids',     String(process.env.FEISHU_NOTIFY_CHAT_IDS || '')],
   ];
   // 只在 key 不存在时 INSERT，保留已有值
   const seedStmt = db.prepare('INSERT OR IGNORE INTO patrol_config (key, value) VALUES (?, ?)');
   for (const [k, v] of DEFAULTS) seedStmt.run(k, v);
+
+  // 2026-04-22 废字段清理（钩子驱动通知系统替代，不再需要 flush 窗口和群 id）
+  db.prepare(
+    "DELETE FROM patrol_config WHERE key IN ('high_flush_ms', 'normal_flush_ms', 'notify_chat_ids')"
+  ).run();
 } catch (e) {
   console.warn('[db] patrol_config migration warning:', e.message);
 }

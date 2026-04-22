@@ -381,17 +381,17 @@ export const TOOL_DEFINITIONS = [
   // ========================================================
   {
     name: 'get_patrol_config',
-    description: '读取当前巡检/通知配置（patrol_hour/patrol_enabled/deadline_alert_days/flush 窗口/通知群 ids）。用户问"巡检几点触发"、"到期预警阈值"时用。',
+    description: '读取当前巡检配置（patrol_hour / patrol_enabled / deadline_alert_days）。用户问"巡检几点触发"、"到期预警阈值"时用。',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'update_patrol_config',
-    description: '修改巡检/通知配置的某一项。合法 key：patrol_hour（0-23）/patrol_enabled（0/1）/deadline_alert_days（1-30）/high_flush_ms（5000-3600000）/normal_flush_ms（10000-86400000）/notify_chat_ids（逗号分隔）。热生效项：patrol_hour / patrol_enabled / deadline_alert_days / notify_chat_ids，flush_ms 改后需 pm2 restart。',
+    description: '修改巡检配置的某一项。合法 key：patrol_hour（0-23）/ patrol_enabled（0/1）/ deadline_alert_days（1-30）。全部热生效，不需重启。',
     input_schema: {
       type: 'object',
       properties: {
         key: { type: 'string', description: '配置键名' },
-        value: { description: '新值（整数传数字，notify_chat_ids 传字符串）' },
+        value: { description: '新值（整数传数字）' },
       },
       required: ['key', 'value'],
     },
@@ -956,11 +956,11 @@ async function runToolInternal(name, input, context) {
       const user = assertAbility(context, 'patrol.config');
       const { key, value } = input;
       const result = setPatrolConfig(key, value);
-      const hotReload = ['patrol_hour', 'patrol_enabled', 'deadline_alert_days', 'notify_chat_ids'].includes(key);
+      // 2026-04-22 改造后剩下的 3 个 key 全部热读 DB，无需重启
       return {
         ok: true, key, old: result.old, new: result.new,
-        hotReload,
-        note: `${PATROL_CONFIG_SCHEMA[key]?.label || key} 已改为 ${result.new}（by ${user?.username}）${hotReload ? '，立即生效' : '，需要 pm2 restart 生效'}`,
+        hotReload: true,
+        note: `${PATROL_CONFIG_SCHEMA[key]?.label || key} 已改为 ${result.new}（by ${user?.username}），立即生效`,
       };
     }
 

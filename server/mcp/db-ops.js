@@ -400,12 +400,9 @@ export function bindFeishuUser(username, password, openId) {
 
 /** config 字段元信息——类型转换 + 校验 */
 const PATROL_CONFIG_SCHEMA = {
-  patrol_hour:         { type: 'int',    range: [0, 23],           label: '巡检触发小时（0-23）' },
-  patrol_enabled:      { type: 'int',    range: [0, 1],            label: '巡检开关（0=关，1=开）' },
-  deadline_alert_days: { type: 'int',    range: [1, 30],           label: 'deadline 预警阈值（天）' },
-  high_flush_ms:       { type: 'int',    range: [5000, 3600000],   label: '高优变更 flush 窗口（毫秒）' },
-  normal_flush_ms:     { type: 'int',    range: [10000, 86400000], label: '普通变更 flush 窗口（毫秒）' },
-  notify_chat_ids:     { type: 'string',                           label: '群通知目标 chat_id 列表（逗号分隔）' },
+  patrol_hour:         { type: 'int',    range: [0, 23], label: '巡检触发小时（0-23）' },
+  patrol_enabled:      { type: 'int',    range: [0, 1],  label: '巡检开关（0=关，1=开）' },
+  deadline_alert_days: { type: 'int',    range: [1, 30], label: 'deadline 预警阈值（天）' },
 };
 
 export const PATROL_CONFIG_KEYS = Object.keys(PATROL_CONFIG_SCHEMA);
