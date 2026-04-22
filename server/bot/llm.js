@@ -409,7 +409,7 @@ function buildSystem(boundUser, toolLog) {
  * @param {Function} [onProgress]
  * @param {Object} [boundUser]
  * @param {string[]} [toolLog]
- * @returns {Promise<{ text, toolSummaries }>}
+ * @returns {Promise<{ text, toolSummaries, toolSteps, exhausted?, allFailed?, uncaughtError? }>}
  */
 export async function chat(userText, history = [], onProgress = null, boundUser = null, toolLog = [], chatContext = {}) {
   const tools = boundUser
@@ -454,11 +454,17 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
       await emit({ type: 'complete', text: result.text, toolSteps: result.toolSteps });
     }
 
-    return { text: result.text, toolSummaries: result.toolSummaries };
+    return {
+      text: result.text,
+      toolSummaries: result.toolSummaries,
+      toolSteps: result.toolSteps,
+      exhausted: result.exhausted,
+      allFailed: result.allFailed,
+    };
   } catch (err) {
     console.error('[Bot/LLM] Error:', err.message);
     if (err.status) console.error('[Bot/LLM] HTTP', err.status, err.error);
     await emit({ type: 'error', text: ERROR_TEXT }).catch(() => {});
-    return { text: ERROR_TEXT, toolSummaries: [] };
+    return { text: ERROR_TEXT, toolSummaries: [], toolSteps: [], uncaughtError: err };
   }
 }

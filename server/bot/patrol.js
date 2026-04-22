@@ -6,6 +6,7 @@
 import { runPatrol } from './notify-llm.js';
 import { createAndSendCard, getFeishuOpenIds } from './feishu.js';
 import { buildPatrolCard, buildPersonalCard } from './card-templates.js';
+import { logDegrade } from './degrade.js';
 
 const PATROL_HOUR = Number(process.env.BOT_PATROL_HOUR) || 9;
 
@@ -66,7 +67,7 @@ async function checkPatrolTime() {
 
     console.log(`[Patrol] 巡检完成: group=${decision.group?.send}, individuals=${decision.individuals?.length || 0}`);
   } catch (err) {
-    console.error('[Patrol] 巡检失败:', err.message);
+    logDegrade('patrol', 'run_failed', err);
   }
 }
 

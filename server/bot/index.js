@@ -54,6 +54,7 @@ import {
   buildHeaderTemplateProbeCard,
   HEADER_TEMPLATES,
 } from './_probe-cards.js';
+import { shouldDegrade, summarizeDegrade, logDegrade, buildDegradeCard } from './degrade.js';
 
 const THROTTLE_MS = 300;
 const FLUSH_AT_CHARS = 30;
@@ -974,11 +975,30 @@ async function handleMessage(text, chatId, userId, chatType) {
 
     try {
       const { messages, toolLog } = getSession(userId);
-      const { text: reply, toolSummaries } = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId });
+      const result = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId });
+      const { text: reply, toolSummaries } = result;
       updateSession(userId, text, reply, toolSummaries);
+
+      // ── 降级检测：只做日志（文本降级已由 agent-loop 自产，streamer 已经把它渲染完）──
+      if (shouldDegrade(result)) {
+        const reason = summarizeDegrade(result);
+        logDegrade('chat', reason, {
+          userId, text: text.slice(0, 60),
+          toolCount: result.toolSteps?.length || 0,
+          errorCount: (result.toolSteps || []).filter(s => s.error).length,
+        });
+      }
     } catch (err) {
       console.error('[Bot] 消息处理错误:', err);
-      await streamer.onError('抱歉，我暂时无法处理请求，请稍后再试。').catch(() => {});
+      logDegrade('chat', 'uncaught', err);
+      // 外层 catch 到非业务异常 → 降级卡片（替换当前卡或补发）
+      try {
+        await createAndSendCard(receiveId, receiveIdType,
+          buildDegradeCard('uncaught', { toolSummaries: [] }));
+      } catch (cardErr) {
+        // 降级卡片也发失败 → 至少让 streamer 切到通用错误态
+        await streamer.onError('抱歉，我暂时无法处理请求，请稍后再试。').catch(() => {});
+      }
     }
   });
 

@@ -20,6 +20,7 @@ import {
   buildNotificationCard,
   buildPersonalCard,
 } from './card-templates.js';
+import { logDegrade } from './degrade.js';
 
 /**
  * 启动变更检测
@@ -48,7 +49,7 @@ async function handleBatch(batch) {
   try {
     decision = await analyzeChanges(batch);
   } catch (err) {
-    console.error('[Detector] LLM 决策失败，使用兜底:', err.message);
+    logDegrade('change-detector', 'analyze_failed', err);
     decision = fallbackNotify(batch);
   }
 
