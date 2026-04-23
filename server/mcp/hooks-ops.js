@@ -240,9 +240,9 @@ export function fuzzyMatchHook(criteria = {}) {
     args.push(criteria.planId);
   }
   if (criteria.dateYmd) {
-    // fire_at 是 ISO 8601，前 10 位是 UTC 日期。匹配北京日期需要 +8h 偏移
-    // 简化：直接字符串 LIKE 'YYYY-MM-DD%' —— 对北京晚间（UTC 次日凌晨）会偏，但大多数场景够用
-    where.push("substr(fire_at, 1, 10) = ?");
+    // SQLite datetime() 把带 tz 的 ISO 归一化到 UTC；再 +8h 得到北京 wall clock；
+    // strftime 取日期部分 → 北京日期。admin 说"明天"= 北京日期，两边一致。
+    where.push("strftime('%Y-%m-%d', datetime(fire_at), '+8 hours') = ?");
     args.push(criteria.dateYmd);
   }
 
