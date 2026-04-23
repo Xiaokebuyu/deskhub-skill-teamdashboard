@@ -19,6 +19,7 @@ import db from '../db/init.js';
 
 let checkTimer = null;
 let lastPatrolDate = '';
+let isPatrolling = false;  // 在飞状态防 60s tick 在 runPatrol 未完时重入
 
 /** 启动巡检定时器 */
 export function startPatrol() {
@@ -45,8 +46,9 @@ async function checkPatrolTime() {
   const patrolHour = getPatrolConfigValue('patrol_hour');
   if (now.getHours() !== patrolHour) return;
   if (lastPatrolDate === today) return;
-  lastPatrolDate = today;
+  if (isPatrolling) return;  // 上一次 runPatrol 还没结束（LLM 慢），别重入
 
+  isPatrolling = true;
   console.log(`[Patrol] 开始每日巡检（hour=${patrolHour}）...`);
 
   try {
@@ -54,7 +56,8 @@ async function checkPatrolTime() {
 
     if (hooks.length === 0) {
       console.log(`[Patrol] 无异常：${reasoning}`);
-      return;  // 无异常不骚扰 admin
+      lastPatrolDate = today;  // 成功但无异常也算今日已跑
+      return;
     }
 
     // 逐条写 pending_confirm 钩子
@@ -78,14 +81,19 @@ async function checkPatrolTime() {
 
     if (created.length === 0) {
       console.log(`[Patrol] LLM 产了 ${hooks.length} 条草案但全部 proposeHook 失败`);
+      lastPatrolDate = today;  // 全失败也不在本小时内一直重试刷屏
       return;
     }
 
     // DM 唯一 admin 一条汇总卡
     await sendSummaryToAdmin(created, reasoning);
     console.log(`[Patrol] 完成：产 ${created.length}/${hooks.length} 条 pending_confirm 钩子`);
+    lastPatrolDate = today;  // 真正成功完成才置位 → 抛错下次 tick 会重试（本小时内）
   } catch (err) {
     logDegrade('patrol', 'run_failed', err);
+    // 不置 lastPatrolDate，让下一分钟 tick 重试；hour 切换后自然停止（最多 60 次尝试）
+  } finally {
+    isPatrolling = false;
   }
 }
 
