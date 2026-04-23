@@ -1019,15 +1019,22 @@ async function runToolInternal(name, input, context) {
       const tgt = db.prepare('SELECT username FROM users WHERE username = ?').get(target_user);
       if (!tgt) throw new Error(`目标用户 ${target_user} 不存在`);
 
-      // 校验 fire_at 是未来时间
+      // 校验 fire_at 是合法 ISO 8601 且带时区（+HH:MM / -HH:MM / Z）。
+      // 无时区字符串 new Date() 会按 UTC 解析，LLM 漏写 +08:00 会偷偷错 8 小时。
+      if (typeof fire_at !== 'string' || !/([+-]\d{2}:?\d{2}|Z)$/.test(fire_at.trim())) {
+        throw new Error(`fire_at 必须是带时区的 ISO 8601（示例 "2026-04-25T09:00:00+08:00"），收到 ${JSON.stringify(fire_at)}`);
+      }
       const fireMs = new Date(fire_at).getTime();
       if (!Number.isFinite(fireMs)) throw new Error(`fire_at 非法时间戳：${fire_at}`);
       if (fireMs <= Date.now()) throw new Error(`fire_at 必须是未来时间（收到 ${fire_at}）`);
 
       // 只有 admin 本人提议才能直接 active；LLM 代笔 / 系统巡检必须走 pending_confirm
-      let status = initial_status || 'pending_confirm';
+      const requested = initial_status || 'pending_confirm';
+      let status = requested;
+      let downgraded = false;
       if (status === 'active' && user?.role !== 'admin') {
         status = 'pending_confirm';
+        downgraded = true;
       }
 
       const hook = proposeHook({
@@ -1042,13 +1049,18 @@ async function runToolInternal(name, input, context) {
 
       if (status === 'active') addHookToScheduler(hook.id);
 
+      const note = status === 'active'
+        ? `钩子 ${hook.id} 已直接激活（admin 本人提议），将在 ${fire_at} DM ${target_user}`
+        : downgraded
+          ? `⚠️ 你请求的 initial_status=active 已降级为 pending_confirm（仅 admin 本人可直接激活；当前 user.role=${user?.role || 'anon'}）。钩子 ${hook.id} 已提议，等 admin 确认后才真发 —— 别忘了 send_notification 提醒 admin。`
+          : `钩子 ${hook.id} 已提议，待 admin 确认后才会真发。DM admin 的确认请求由你下一步用 send_notification 发（或用户下次跟小合说话会看到 memory 里的 pending 列表）`;
+
       return {
         ok: true,
         hook_id: hook.id,
         status: hook.status,
-        note: status === 'active'
-          ? `钩子 ${hook.id} 已直接激活（admin 本人提议），将在 ${fire_at} DM ${target_user}`
-          : `钩子 ${hook.id} 已提议，待 admin 确认后才会真发。DM admin 的确认请求由你下一步用 send_notification 发（或用户下次跟小合说话会看到 memory 里的 pending 列表）`,
+        downgraded,
+        note,
       };
     }
 
