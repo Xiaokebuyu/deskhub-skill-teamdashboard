@@ -53,19 +53,44 @@ async function withLock(key, fn) {
 //  _index.json：openId ↔ username 映射
 // ──────────────────────────────────────────────────────────
 
+/**
+ * 原子写文件：tmp 文件落盘后 rename 覆盖目标，同 FS 下 rename 原子
+ * 防 OS 崩溃 / SIGKILL 中途截断导致 JSON.parse / md 读取永久报错
+ */
+async function atomicWriteFile(targetPath, content) {
+  await fs.mkdir(dirname(targetPath), { recursive: true });
+  const tmp = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  await fs.writeFile(tmp, content, 'utf8');
+  try {
+    await fs.rename(tmp, targetPath);
+  } catch (err) {
+    await fs.unlink(tmp).catch(() => {});
+    throw err;
+  }
+}
+
 async function readIndex() {
   try {
     const raw = await fs.readFile(INDEX_PATH, 'utf8');
     return JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') return {};
+    if (err instanceof SyntaxError) {
+      // _index.json 损坏（上次写入被截断 / 磁盘故障）。备份原文件、从空索引重建，
+      // 避免所有用户的 memory 读取永久炸在 JSON.parse
+      const backup = `${INDEX_PATH}.corrupt.${Date.now()}`;
+      console.error(`[Memory] _index.json 损坏，备份到 ${backup} 后从空索引重建:`, err.message);
+      await fs.rename(INDEX_PATH, backup).catch(e =>
+        console.warn('[Memory] 备份 _index.json 失败:', e.message)
+      );
+      return {};
+    }
     throw err;
   }
 }
 
 async function writeIndex(idx) {
-  await fs.mkdir(MEMORY_DIR, { recursive: true });
-  await fs.writeFile(INDEX_PATH, JSON.stringify(idx, null, 2), 'utf8');
+  await atomicWriteFile(INDEX_PATH, JSON.stringify(idx, null, 2));
 }
 
 const INDEX_LOCK_KEY = '__index__';
@@ -158,8 +183,7 @@ export async function saveUserMemory(openId, boundUser, content) {
   }
 
   await withLock(key, async () => {
-    await fs.mkdir(MEMORY_DIR, { recursive: true });
-    await fs.writeFile(pathOf(key), content, 'utf8');
+    await atomicWriteFile(pathOf(key), content);
   });
 
   return {
@@ -350,39 +374,40 @@ export async function migrateAnonToUser(openId, username) {
     });
   }
 
-  let anonContent = '';
-  let userContent = '';
-  try { anonContent = await fs.readFile(anonPath, 'utf8'); }
-  catch (err) { if (err.code !== 'ENOENT') throw err; }
-  try { userContent = await fs.readFile(userPath, 'utf8'); }
-  catch (err) { if (err.code !== 'ENOENT') throw err; }
+  // 整段 read-check-merge-write 进 anonKey 锁：防两个并发 bind（双击 / admin 重绑）
+  // 都读到同份 anon 内容、都 merge 一遍 → user 段重复
+  const result = await withLock(anonKey, async () => {
+    let anonContent = '';
+    let userContent = '';
+    try { anonContent = await fs.readFile(anonPath, 'utf8'); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+    try { userContent = await fs.readFile(userPath, 'utf8'); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
 
-  if (!anonContent) {
-    await updateIndex();
-    return { migrated: false, reason: 'no anon memory' };
-  }
+    if (!anonContent) {
+      return { migrated: false, reason: 'no anon memory' };
+    }
 
-  // 若 user 文件里已有本次迁移标记 → 先前合并过，anon 文件是残留，直接 unlink
-  if (userContent.includes(migrateMarker)) {
-    await fs.unlink(anonPath).catch(err => console.warn('[Memory] 清理残留 anon 失败:', err.message));
-    await updateIndex();
-    return { migrated: false, reason: 'already merged' };
-  }
+    // 若 user 文件里已有本次迁移标记 → 先前合并过，anon 文件是残留，直接 unlink
+    if (userContent.includes(migrateMarker)) {
+      await fs.unlink(anonPath).catch(err => console.warn('[Memory] 清理残留 anon 失败:', err.message));
+      return { migrated: false, reason: 'already merged' };
+    }
 
-  // 合并策略：anon 的 Public/Private 分别 append 到 user 对应段
-  const aSeg = parseSegments(anonContent);
-  const uSeg = parseSegments(userContent);
-  const merged = migrateMarker + '\n' + composeSegments({
-    public: [uSeg.public, aSeg.public].filter(Boolean).join('\n\n'),
-    private: [uSeg.private, aSeg.private].filter(Boolean).join('\n\n'),
+    // 合并策略：anon 的 Public/Private 分别 append 到 user 对应段
+    const aSeg = parseSegments(anonContent);
+    const uSeg = parseSegments(userContent);
+    const merged = migrateMarker + '\n' + composeSegments({
+      public: [uSeg.public, aSeg.public].filter(Boolean).join('\n\n'),
+      private: [uSeg.private, aSeg.private].filter(Boolean).join('\n\n'),
+    });
+
+    await atomicWriteFile(userPath, merged);
+    await fs.unlink(anonPath).catch(err => console.warn('[Memory] unlink anon 失败（已带幂等标记，下次启动会清理）:', err.message));
+
+    return { migrated: true, from: anonPath, to: userPath };
   });
-
-  await withLock(userKey, async () => {
-    await fs.writeFile(userPath, merged, 'utf8');
-  });
-  await fs.unlink(anonPath).catch(err => console.warn('[Memory] unlink anon 失败（已带幂等标记，下次启动会清理）:', err.message));
 
   await updateIndex();
-
-  return { migrated: true, from: anonPath, to: userPath };
+  return result;
 }
