@@ -6,7 +6,7 @@
  *   - 流式（text + thinking + input_json）
  *   - 交错思考（interleaved-thinking-2025-05-14 beta 头）：模型可在多轮工具调用之间持续推理
  *   - prompt caching：静态 system prompt + tools 入 cache（5min TTL，命中价 ×0.1）
- *   - 8 轮 tool use 上限
+ *   - tool use 轮数上限：默认 20，可通过 BOT_CHAT_MAX_ROUNDS 环境变量覆盖
  *
  * 进度事件回调（onProgress）：
  *   { type: 'text_chunk',     delta, round }
@@ -20,8 +20,10 @@
 
 import { TOOL_DEFINITIONS, TOOL_DEFINITIONS_CHAT_ONLY, executeTool, withToolsCache } from './tools.js';
 import { runAgentLoop, ERROR_TEXT } from './agent-loop.js';
+import { beijingNowLine } from '../utils/time.js';
+import { loadUserMemory, renderForInjection } from './memory/index.js';
 
-const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_ROUNDS = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
 const MAX_TOKENS = 8192;
 const THINKING_BUDGET = 2000;   // thinking token 预算（不计入 max_tokens）
 
@@ -100,6 +102,49 @@ const STATIC_SYSTEM_PROMPT = `你是小合，DeskSkill TeamBoard 的协作中枢
 - "能不能帮我看看 P-012 情况" → 读工单给分析（查询类工具）
 - "帮我给 P-012 加个方案" → 这是明确要求，用 proxy_add_variant
 - "把刚才那份方案发我" / "给我下载一份" → 直接调 send_file_to_user，不要反问
+
+## 通知钩子（核心机制）
+
+平台**不再**自动广播变更或每日巡检发群。所有通知都走"钩子"：admin 点过头的、指定时间触发的、只 DM。你是钩子的主要产出方。
+
+### 钩子来源（你要识别 3 种场景）
+
+**场景 A：工单刚建好且带 deadline**
+→ **自动**调 \`propose_notification_hook\`：
+  - target_user = plan.owner（若为空用 plan 创建人）
+  - fire_at = deadline 当天 09:00+08:00 的前一天（前 1 天上午 9 点，默认策略；除非用户明说"提前 3 天" / "当天提醒"等再按说的写）
+  - message = 小合写的草案，含工单名 + 到期日 + 简短催动作，如 "李四，「知识库重构」4-25 到期，看看能不能今天推进一下"
+  - source = 'deadline'
+  - plan_id = 新建的 plan.id
+  - 不传 initial_status（默认 pending_confirm）
+→ 告诉用户"已提议钩子 h00x，admin 确认后会自动在前一天提醒 owner"
+
+**场景 B：工单刚建好但没 deadline**
+→ **不**调 propose_notification_hook。用 send_notification DM admin 一句温和话："李四建了个工单「xxx」但没设 deadline，要不要加一个 + 挂提醒？"
+→ admin 回"设到周四，前一天提醒"：
+  - 先 proxy_edit_plan 把 deadline 落 DB
+  - 再 propose_notification_hook (target=owner, fire_at=周三 9:00, initial_status='active'（因为 admin 本人指示）)
+→ admin 不回 → 沉默，不重提
+
+**场景 C：admin 口头挂钩子**
+例如 "周四下午 3 点提醒张三交方案"、"提醒小王周一看下 P-012"。
+→ 解析时间+对象+内容 → propose_notification_hook 用 \`initial_status: 'active'\`（admin 本人亲自提议可跳过确认）
+→ **一定要回执确认**解析结果："好的，已挂 h012，4-25 周四 15:00 提醒张三：看工单 P-012 的评测进度。" admin 有异议会再改
+
+**场景 D：admin 对已有钩子操作**
+- "h007 行" / "确认 h007" → confirm_notification_hook(h007)
+- "h007 改到前 3 天" / "h007 改成周五" → modify_notification_hook(h007, { fire_at: ... })
+- "取消 h007" → cancel_notification_hook(hook_id='h007')
+- "取消张三明天那个" → cancel_notification_hook(target_user='张三', date_ymd='YYYY-MM-DD')
+  返回候选后让 admin 选具体 id，再精确取消
+- "待确认钩子有哪些" / "我挂的钩子" → list_notification_hooks
+
+### 重要约束
+
+- fire_at **必须是未来时间**且带 +08:00 时区后缀（如 "2026-04-25T09:00:00+08:00"）。你用当前时间（北京）做参照推算
+- target_user 必须是 users 表里的用户（先 list_users 确认，或凭记忆/上下文）
+- LLM（你）代用户/巡检发起的钩子 **必须**走 pending_confirm（即不传 initial_status）；只有 admin 本人亲口说的才可传 'active'
+- 钩子的 message 要**贴合工单内容 + 简短 + 友好**，不要机械套模板
 
 ## 做助手的方法
 
@@ -367,12 +412,8 @@ Markdown 表格和块级 markup（\`[[plan:...]]\` / \`[[skill:...]]\` / \`[[mcp
 /**
  * 构建 system prompt（数组形式，前段静态可缓存，后段动态）
  */
-function buildSystem(boundUser, toolLog) {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const nowMs = now.getTime();
-
-  let dynamicSuffix = `\n\n## 当前上下文\n时间：${today}（毫秒时间戳 ${nowMs}）`;
+function buildSystem(boundUser, toolLog, memoryInjection = '') {
+  let dynamicSuffix = `\n\n## 当前上下文\n${beijingNowLine()}`;
 
   if (toolLog && toolLog.length > 0) {
     dynamicSuffix += `\n\n## 本次会话的工具调用记录\n${toolLog.map(l => `- ${l}`).join('\n')}\n这些是你在之前轮次中调用过的工具，结果已反映在历史回复中。`;
@@ -383,6 +424,10 @@ function buildSystem(boundUser, toolLog) {
     dynamicSuffix += `\n\n## 当前对话用户\n用户名：${boundUser.username}\n显示名：${boundUser.display_name || boundUser.username}\n角色：${roleLabel}\n\n你知道在和谁说话。回复时可以自然地称呼对方。通知别人时排除这个人自己。`;
   } else {
     dynamicSuffix += `\n\n## 当前对话用户\n未绑定飞书账号的用户。你可以正常聊天，但不要查询平台数据或发送通知。如果对方想使用平台功能，友好地提醒：私聊发送「绑定 用户名 密码」来关联账号。`;
+  }
+
+  if (memoryInjection) {
+    dynamicSuffix += `\n\n## 你对这位用户的记忆\n${memoryInjection}\n\n记忆用于让你的回复更贴合这个人的偏好。**不要**把记忆当事实引用（比如不要说"根据我的记忆你在跟进工单 X"——去查 DB）。记忆是软信息：偏好、习惯、画像。用户明确表达"记住/以后这样"时，调 update_memory_section 更新对应段。`;
   }
 
   return [
@@ -409,12 +454,27 @@ function buildSystem(boundUser, toolLog) {
  * @param {Function} [onProgress]
  * @param {Object} [boundUser]
  * @param {string[]} [toolLog]
- * @returns {Promise<{ text, toolSummaries }>}
+ * @returns {Promise<{ text, toolSummaries, toolSteps, exhausted?, allFailed?, uncaughtError? }>}
  */
 export async function chat(userText, history = [], onProgress = null, boundUser = null, toolLog = [], chatContext = {}) {
   const tools = boundUser
     ? withToolsCache(TOOL_DEFINITIONS)
     : TOOL_DEFINITIONS_CHAT_ONLY;
+
+  // 读取记忆并按 chatType 过滤 Private（群聊只给 Public，私聊给全量）
+  let memoryInjection = '';
+  try {
+    if (chatContext?.openId) {
+      const mem = await loadUserMemory(chatContext.openId, boundUser);
+      memoryInjection = renderForInjection({
+        content: mem.content,
+        chatType: chatContext.chatType || 'p2p',
+      });
+    }
+  } catch (err) {
+    console.warn('[Bot/Memory] load failed:', err.message);
+    // 记忆失败不阻塞对话，继续走无记忆流程
+  }
 
   const initialMessages = [
     ...history,
@@ -427,13 +487,14 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
     const result = await runAgentLoop({
       maxTokens: MAX_TOKENS,
       maxRounds: MAX_TOOL_ROUNDS,
-      buildSystem: () => buildSystem(boundUser, toolLog),
+      buildSystem: () => buildSystem(boundUser, toolLog, memoryInjection),
       initialMessages,
       tools,
       thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET },
       interleaved: true,
       // 注入 boundUser + chatContext（openId 等）给 proxy_* 和 send_file_to_user 工具
-      executeTool: (name, input) => executeTool(name, input, { boundUser, chatContext }),
+      // opts 由 agent-loop 的 runToolWithTimeout 传入（含 signal），合并进 context 透传
+      executeTool: (name, input, opts = {}) => executeTool(name, input, { boundUser, chatContext, ...opts }),
 
       onTextChunk: (delta, round) => emit({ type: 'text_chunk', delta, round }),
       onThinkingChunk: (delta, round) => emit({ type: 'thinking_chunk', delta, round }),
@@ -454,11 +515,17 @@ export async function chat(userText, history = [], onProgress = null, boundUser 
       await emit({ type: 'complete', text: result.text, toolSteps: result.toolSteps });
     }
 
-    return { text: result.text, toolSummaries: result.toolSummaries };
+    return {
+      text: result.text,
+      toolSummaries: result.toolSummaries,
+      toolSteps: result.toolSteps,
+      exhausted: result.exhausted,
+      allFailed: result.allFailed,
+    };
   } catch (err) {
     console.error('[Bot/LLM] Error:', err.message);
     if (err.status) console.error('[Bot/LLM] HTTP', err.status, err.error);
     await emit({ type: 'error', text: ERROR_TEXT }).catch(() => {});
-    return { text: ERROR_TEXT, toolSummaries: [] };
+    return { text: ERROR_TEXT, toolSummaries: [], toolSteps: [], uncaughtError: err };
   }
 }

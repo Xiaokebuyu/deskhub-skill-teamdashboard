@@ -6,6 +6,7 @@ import { dirname, join } from 'path';
 import db from '../db/init.js';
 import { wrapResponse } from '../utils/meta.js';
 import { requireRole } from '../middleware/auth.js';
+import { deletePlan } from '../mcp/db-ops.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, '..', 'uploads');
@@ -36,8 +37,9 @@ router.get('/plans', (req, res) => {
     const { type, status } = req.query;
     let where = [];
     let params = {};
-    if (type) { where.push('p.type = $type'); params.$type = type; }
-    if (status) { where.push('p.status = $status'); params.$status = status; }
+    // better-sqlite3 绑定 named params 时 key 不含 $ 前缀（SQL 里保留 $）
+    if (type) { where.push('p.type = $type'); params.type = type; }
+    if (status) { where.push('p.status = $status'); params.status = status; }
     const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const plans = db.prepare(`SELECT * FROM plans p ${clause} ORDER BY p.created_at DESC`).all(params);
@@ -167,13 +169,7 @@ router.patch('/plans/:id/status', requireRole('admin'), (req, res) => {
 // --- DELETE /api/plans/:id ---
 router.delete('/plans/:id', requireRole('admin'), (req, res) => {
   try {
-    // 级联删除 scores → variants → plan（FK CASCADE 处理 variants→scores）
-    const vids = db.prepare('SELECT id FROM variants WHERE plan_id = ?').all(req.params.id).map(v => v.id);
-    if (vids.length > 0) {
-      db.prepare(`DELETE FROM scores WHERE variant_id IN (${vids.map(() => '?').join(',')})`).run(...vids);
-    }
-    db.prepare('DELETE FROM variants WHERE plan_id = ?').run(req.params.id);
-    db.prepare('DELETE FROM plans WHERE id = ?').run(req.params.id);
+    deletePlan(req.params.id);
     res.json(local({ ok: true }));
   } catch (err) {
     console.error('[plans/delete]', err.message);
@@ -195,15 +191,15 @@ router.post('/plans/:planId/variants', requireRole('admin', 'tester', 'member'),
     const lockMsg = checkPlanNotDone(planId);
     if (lockMsg) return res.status(403).json({ error: lockMsg });
 
-    const { name, uploader, desc = '', link = '', content = null, attachments = '' } = req.body;
-    if (!name || !uploader) return res.status(400).json({ error: 'name 和 uploader 必填' });
+    const { name, desc = '', link = '', content = null, attachments = '' } = req.body;
+    if (!name) return res.status(400).json({ error: 'name 必填' });
 
     const id = 'v' + uid();
     const attStr = typeof attachments === 'string' ? attachments : JSON.stringify(attachments);
-    // 注：走 REST API 的请求永远是真人（author_type 走 DEFAULT 'human'）
+    // 走 REST API 的请求永远是真人：uploader 强制用 JWT 里的 username，不信任 body
     // 小合代笔走直接 db-ops 调用，在 server/mcp/db-ops.js 里注入 AI 字段
     db.prepare(`INSERT INTO variants (id, plan_id, name, uploader, description, link, content, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, planId, name, uploader, desc, link, content, attStr);
+      .run(id, planId, name, req.user, desc, link, content, attStr);
 
     const v = db.prepare('SELECT * FROM variants WHERE id = ?').get(id);
     res.status(201).json(local({
@@ -271,10 +267,12 @@ router.delete('/variants/:id', requireRole('admin', 'tester', 'member'), (req, r
       if (variant.uploader !== req.user) {
         return res.status(403).json({ error: '只能删除自己的方案' });
       }
-      // 未评分校验
-      const scoreCount = db.prepare('SELECT COUNT(*) AS n FROM scores WHERE variant_id = ?').get(id).n;
-      if (scoreCount > 0) {
-        return res.status(403).json({ error: '方案已有评分，无法删除' });
+      // 仅保护他人评分，自己（含代笔）的自评不阻拦 —— 随 variant 一并级联删
+      const otherScoreCount = db.prepare(
+        'SELECT COUNT(*) AS n FROM scores WHERE variant_id = ? AND tester != ?'
+      ).get(id, req.user).n;
+      if (otherScoreCount > 0) {
+        return res.status(403).json({ error: '方案已有他人评分，无法删除' });
       }
     }
 
@@ -301,10 +299,12 @@ router.post('/variants/:variantId/scores', requireRole('admin', 'tester'), (req,
     const lockMsg = checkPlanNotDone(variant.plan_id);
     if (lockMsg) return res.status(403).json({ error: lockMsg });
 
-    const { tester, scores, evalDoc } = req.body;
-    if (!tester || !Array.isArray(scores) || scores.length === 0) {
-      return res.status(400).json({ error: 'tester 和 scores[] 必填' });
+    const { scores, evalDoc } = req.body;
+    if (!Array.isArray(scores) || scores.length === 0) {
+      return res.status(400).json({ error: 'scores[] 必填' });
     }
+    // REST 请求永远是真人，tester 强制用 JWT 里的 username，不信任 body
+    const tester = req.user;
 
     // 校验评分上限
     const dimsMap = {};

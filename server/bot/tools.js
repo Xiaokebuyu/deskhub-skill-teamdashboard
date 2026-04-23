@@ -18,6 +18,9 @@ import {
   listPlans, getPlanDetail, getDimensions, listUsers, getRecentChanges,
   createPlan, editPlan, addVariant, editVariant, deleteVariant,
   submitScores, editScore, deleteScore, appendVariantFiles,
+  grantPermission, revokePermission, listUserPermissions, listAllPermissionGrants,
+  getPatrolConfig, setPatrolConfig, PATROL_CONFIG_KEYS, PATROL_CONFIG_SCHEMA,
+  createDimension, editDimension, deleteDimension,
 } from '../mcp/db-ops.js';
 import {
   listDeskhubSkills, getDeskhubSkill, fetchDeskhubFile,
@@ -26,6 +29,20 @@ import {
 import db from '../db/init.js';
 import { createAndSendCard, uploadFileToFeishu, sendFileMessage } from './feishu.js';
 import { buildPersonalCard } from './card-templates.js';
+import {
+  loadUserMemory, saveUserMemory,
+  upsertSection, removeSection, appendNote,
+  checkSizeLimit, MEMORY_SIZE_SOFT_LIMIT, MEMORY_SIZE_HARD_LIMIT,
+} from './memory/index.js';
+import { assertAbility, checkAbility, ABILITIES, ABILITY_NAMES } from './abilities.js';
+import { getActiveSessionCount } from './session.js';
+import { getConcurrencyMetrics } from './concurrency.js';
+import { beijingNowLine } from '../utils/time.js';
+import {
+  proposeHook, confirmHook, modifyHook, cancelHook,
+  listHooks, fuzzyMatchHook, getHookById,
+} from '../mcp/hooks-ops.js';
+import { addHookToScheduler, removeHookFromScheduler } from './hook-scheduler.js';
 
 // ── 工具定义（Anthropic / MiniMax 兼容格式）──
 
@@ -265,6 +282,228 @@ export const TOOL_DEFINITIONS = [
   },
 
   // ========================================================
+  //  记忆工具（per-user markdown）
+  //  只在用户明确表达"记住/忘掉/改偏好"类意图时才写
+  //  Public 段 = 可能在群聊对任何人提起；Private 段 = 仅当前私聊使用
+  // ========================================================
+  {
+    name: 'update_memory_section',
+    description: '在你对当前用户的记忆里新建或更新一个命名段落。用于记录"画像/偏好/协作方式/通知习惯/进行中的关注"等软信息。**不要**记事实数据（工单状态/评分数值/人名等——去查 DB）。只在用户明确表达"记住/以后这样/我的偏好"时调用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', description: '段落标题（不含 ###，如"画像"、"协作偏好"、"通知偏好"）' },
+        content: { type: 'string', description: '段落正文，几行即可；保持精炼、抽象、可复用' },
+        segment: {
+          type: 'string', enum: ['public', 'private'],
+          description: 'public=群聊+私聊都可注入；private=仅私聊注入（群里永不泄露）。拿不准选 private',
+        },
+      },
+      required: ['section', 'content', 'segment'],
+    },
+  },
+  {
+    name: 'append_memory_note',
+    description: '在记忆里追加一条带日期的短笔记（≤30 字）。用于捕捉"今天他提到 X、他在跟进 Y"这类上下文锚点，不适合写进结构化段落的零散观察。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: '一行短笔记（≤30 字）' },
+        segment: { type: 'string', enum: ['public', 'private'] },
+      },
+      required: ['note', 'segment'],
+    },
+  },
+  {
+    name: 'forget_memory_section',
+    description: '删除记忆里的某个命名段落（同名的 public 和 private 段都会删）。仅在用户说"忘了那件事/别再记住 X"时用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', description: '要删除的段落标题' },
+      },
+      required: ['section'],
+    },
+  },
+
+  // ========================================================
+  //  系统健康检查（system.health）
+  // ========================================================
+  {
+    name: 'get_system_health',
+    description: '查看服务器健康指标：Node 进程（memory/uptime/cpu）+ 工作台基本统计（工单数/近24h变更/active session）+ 并发状态。用户问"服务器状态"、"系统还好吗"、"现在负载如何"时用。',
+    input_schema: { type: 'object', properties: {} },
+  },
+
+  // ========================================================
+  //  维度代笔（dimension.crud）
+  // ========================================================
+  {
+    name: 'proxy_add_dimension',
+    description: '[代笔] 新增一个评测维度。仅在管理员明确要求"加一个评测维度 XXX 满分 Y"时用。需要 dimension.crud 权限。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '维度名称（如 "响应速度"、"可维护性"）' },
+        max: { type: 'number', description: '满分，默认 10' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'proxy_edit_dimension',
+    description: '[代笔] 编辑维度：改名 / 改满分 / 启用停用（active 字段）。需要 dimension.crud。关闭某个维度用 { dimension_id, active: false }。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dimension_id: { type: 'string' },
+        name: { type: 'string' },
+        max: { type: 'number' },
+        active: { type: 'boolean', description: 'true=启用，false=停用（保留历史评分）' },
+      },
+      required: ['dimension_id'],
+    },
+  },
+  {
+    name: 'proxy_delete_dimension',
+    description: '[代笔] 软删除维度（设 active=0，不物理删除，历史评分保留）。需要 dimension.crud。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dimension_id: { type: 'string' },
+      },
+      required: ['dimension_id'],
+    },
+  },
+
+  // ========================================================
+  //  巡检配置工具（patrol.config）
+  // ========================================================
+  {
+    name: 'get_patrol_config',
+    description: '读取当前巡检配置（patrol_hour / patrol_enabled / deadline_alert_days）。用户问"巡检几点触发"、"到期预警阈值"时用。',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'update_patrol_config',
+    description: '修改巡检配置的某一项。合法 key：patrol_hour（0-23）/ patrol_enabled（0/1）/ deadline_alert_days（1-30）。全部热生效，不需重启。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: '配置键名' },
+        value: { description: '新值（整数传数字）' },
+      },
+      required: ['key', 'value'],
+    },
+  },
+
+  // ========================================================
+  //  权限管理工具（permissions.manage）
+  // ========================================================
+  {
+    name: 'grant_user_ability',
+    description: '给目标用户授予某个 ability（按动作粒度的权限）。需要 permissions.manage。用于把 patrol.config / dimension.crud / system.health 等原本 admin-only 的能力下放给特定 tester 或 member。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string', description: '目标用户 username（必须是 users 表里已存在的）' },
+        ability: { type: 'string', description: '要授予的 ability 名（如 patrol.config、dimension.crud）' },
+      },
+      required: ['target_username', 'ability'],
+    },
+  },
+  {
+    name: 'revoke_user_ability',
+    description: '撤销目标用户的某个 ability。仅撤销显式授权；不会影响角色 fallback（如 admin 依然自动拥有）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string' },
+        ability: { type: 'string' },
+      },
+      required: ['target_username', 'ability'],
+    },
+  },
+  {
+    name: 'list_user_abilities',
+    description: '列出某用户或所有用户的显式授权记录。不带 target_username 则返回全部 grant。注意：角色 fallback（admin 默认拥有所有）不体现在这里——只看 DB 表。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_username: { type: 'string', description: '留空则返回所有 grant 记录' },
+      },
+    },
+  },
+
+  // ========================================================
+  //  通知钩子（hook.propose / hook.manage）
+  //  钩子驱动通知：所有通知都是 admin 点过头的、指定时间触发的 DM
+  //  3 种来源：工单 deadline 自估 / admin 口头 / 每日巡检扫异常
+  // ========================================================
+  {
+    name: 'propose_notification_hook',
+    description: '提议一个新通知钩子。**适用场景**：(a) 用户/admin 创建带 deadline 的工单后，你判断要不要提醒 owner（默认前 1 天上午 9 点）；(b) admin 口头说"X 时间提醒 Y"（admin 本人提议可直接 active，不走确认）；(c) 巡检扫到异常。\n\n**不走确认流程**（直接 active）当且仅当 initial_status="active" 且调用者本人是 admin。\n\n系统会自动：生成短 id（h00x）、保 pending_confirm 写 DB、DM admin 发确认请求。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_user: { type: 'string', description: '被提醒的 username（必须在 users 表里）' },
+        fire_at: { type: 'string', description: '触发时间 ISO 8601，必须带 +08:00（如 "2026-04-25T09:00:00+08:00"）' },
+        message: { type: 'string', description: '给 target 发的消息正文（简短、友好、有上下文）' },
+        source: { type: 'string', enum: ['deadline', 'patrol', 'admin_verbal'], description: '钩子来源' },
+        plan_id: { type: 'string', description: '关联的工单 id（可空，如 admin 口头挂个一次性提醒）' },
+        initial_status: { type: 'string', enum: ['pending_confirm', 'active'], description: 'admin 口头发起可传 active 跳过确认；系统/LLM 生成必须用默认 pending_confirm' },
+      },
+      required: ['target_user', 'fire_at', 'message', 'source'],
+    },
+  },
+  {
+    name: 'confirm_notification_hook',
+    description: '确认一个 pending_confirm 钩子让它变成 active，到点会真发 DM。admin 说"h007 行"/"确认 h007"时调用。',
+    input_schema: {
+      type: 'object',
+      properties: { hook_id: { type: 'string', description: '钩子短 id，如 h007' } },
+      required: ['hook_id'],
+    },
+  },
+  {
+    name: 'modify_notification_hook',
+    description: '修改钩子的 fire_at / message / target_user。admin 说"h007 改成前 3 天提醒"/"改成下周一"/"改成让张三"时调用。仅 pending_confirm 和 active 可改。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hook_id: { type: 'string' },
+        fire_at: { type: 'string', description: 'ISO 8601 带 +08:00' },
+        message: { type: 'string' },
+        target_user: { type: 'string' },
+      },
+      required: ['hook_id'],
+    },
+  },
+  {
+    name: 'cancel_notification_hook',
+    description: '取消钩子。两种用法：(1) 精确：传 hook_id="h007"。(2) 模糊：传 target_user 或 plan_id 或 date_ymd（YYYY-MM-DD），返回候选让 admin 二次确认，admin 定了具体 id 再调一次精确取消。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hook_id: { type: 'string', description: '精确取消' },
+        target_user: { type: 'string', description: '模糊候选：按被提醒对象' },
+        plan_id: { type: 'string', description: '模糊候选：按工单' },
+        date_ymd: { type: 'string', description: '模糊候选：按 fire_at 的日期 YYYY-MM-DD' },
+      },
+    },
+  },
+  {
+    name: 'list_notification_hooks',
+    description: '列出钩子。不传 filter 返回 pending_confirm + active 全部；传 status 过滤。admin 问"待确认的钩子还有哪些"/"我挂的所有钩子"时用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['pending_confirm', 'active', 'fired', 'cancelled', 'expired'] },
+      },
+    },
+  },
+
+  // ========================================================
   //  DeskHub 文件读取 + 飞书发附件
   // ========================================================
   {
@@ -293,8 +532,12 @@ export const TOOL_DEFINITIONS = [
   },
 ];
 
-// 闲聊工具集（未绑定用户）— 不含平台数据查询和通知
-export const TOOL_DEFINITIONS_CHAT_ONLY = [];
+// 闲聊工具集（未绑定用户）— 不含平台数据查询和通知，但允许写自己的 anon memory
+export const TOOL_DEFINITIONS_CHAT_ONLY = TOOL_DEFINITIONS.filter(t =>
+  t.name === 'update_memory_section' ||
+  t.name === 'append_memory_note' ||
+  t.name === 'forget_memory_section'
+);
 
 /**
  * 给 tool 数组的最后一项加 cache_control，使整个 tools 列表进入 prompt cache
@@ -309,21 +552,6 @@ export function withToolsCache(tools) {
 
 // ── 工具执行器 ──
 
-/**
- * 校验 boundUser 是否存在且有某角色
- * proxy_* 工具都需要 boundUser（非绑定用户根本看不到这些工具）
- */
-function assertProxyRole(context, ...allowed) {
-  const user = context?.boundUser;
-  if (!user) {
-    throw new Error('代笔工具需要绑定用户身份。未绑定用户不能使用。');
-  }
-  if (allowed.length && !allowed.includes(user.role)) {
-    throw new Error(`角色 ${user.role} 无权执行此代笔操作（需要 ${allowed.join('/')}）`);
-  }
-  return user;
-}
-
 /** 构造代笔 metadata，每次写入记录时刻 + 模型信息 */
 function buildProxyMetadata() {
   return {
@@ -333,7 +561,89 @@ function buildProxyMetadata() {
   };
 }
 
+// 写类工具（db_write 分类用）
+const WRITE_TOOL_PREFIXES = ['proxy_'];
+// 走外部 HTTP 的工具（DeskHub / Umami / 飞书）
+const HTTP_TOOL_NAMES = new Set([
+  'list_deskhub_skills', 'get_deskhub_skill', 'get_deskhub_skill_file',
+  'get_umami_stats', 'get_umami_active',
+  'send_notification', 'send_file_to_user',
+]);
+
+/**
+ * 根据 err 和 toolName 分类错误，返回 { category, retryable, suggestion? }
+ * 给 LLM 做 agentic 决策用，不在此处自动重试
+ */
+function classifyError(err, toolName) {
+  const msg = err?.message || String(err);
+  const code = err?.code || '';
+  const name = err?.name || '';
+
+  // AbortError（fetch 被 agent-loop 的 AbortController 取消）→ 视同 timeout，可重试
+  if (name === 'AbortError' || code === 'ABORT_ERR') {
+    return { category: 'timeout', retryable: true };
+  }
+
+  // SQLite 错误
+  if (typeof code === 'string' && code.startsWith('SQLITE_')) {
+    const isWrite = WRITE_TOOL_PREFIXES.some(p => toolName.startsWith(p));
+    const category = isWrite ? 'db_write' : 'db_read';
+    const retryable = code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED';
+    return { category, retryable };
+  }
+
+  // 权限类（assertAbility / 业务所有权校验 抛出）
+  if (msg.includes('无权执行') ||
+      msg.includes('只能编辑自己代笔') ||
+      msg.includes('只能删除自己代笔') ||
+      msg.includes('未定义的 ability')) {
+    return { category: 'permission', retryable: false };
+  }
+
+  // 参数/资源不存在类（LLM 换参或换资源可再试）
+  if (msg.includes('必填') || msg.includes('不存在') ||
+      msg.includes('未找到') || msg.includes('超过') ||
+      msg.includes('内容为空') || msg.startsWith('未知工具') ||
+      msg.includes('未绑定飞书') || msg.includes('需要整数') ||
+      msg.includes('范围') || msg.includes('未知 patrol_config key') ||
+      msg.includes('合法值：')) {
+    return { category: 'invalid_input', retryable: true };
+  }
+
+  // 文件系统
+  if (code === 'ENOENT' || code === 'EACCES' || code === 'EISDIR' || code === 'EPERM') {
+    return { category: 'fs', retryable: false };
+  }
+
+  // HTTP
+  if (HTTP_TOOL_NAMES.has(toolName) ||
+      msg.includes('fetch failed') || msg.includes('ECONNRESET') ||
+      msg.includes('ETIMEDOUT') || msg.includes('socket hang up') ||
+      msg.includes('network')) {
+    return { category: 'http', retryable: true };
+  }
+
+  return { category: 'unknown', retryable: false };
+}
+
 export async function executeTool(name, input = {}, context = {}) {
+  try {
+    return await runToolInternal(name, input, context);
+  } catch (err) {
+    const { category, retryable, suggestion } = classifyError(err, name);
+    const msg = err?.message || String(err);
+    if (category === 'unknown') {
+      console.error(`[Bot/Tool] ${name} 失败 (${category}):`, msg, err?.stack);
+    } else {
+      console.error(`[Bot/Tool] ${name} 失败 (${category}, retryable=${retryable}):`, msg);
+    }
+    const error = { category, message: msg, retryable, tool: name };
+    if (suggestion) error.suggestion = suggestion;
+    return { ok: false, error };
+  }
+}
+
+async function runToolInternal(name, input, context) {
   switch (name) {
     case 'list_plans':
       return listPlans({ type: input.type, status: input.status });
@@ -348,11 +658,11 @@ export async function executeTool(name, input = {}, context = {}) {
       const query = {};
       if (input.search) query.search = input.search;
       if (input.limit) query.limit = String(input.limit);
-      return listDeskhubSkills(query);
+      return listDeskhubSkills(query, { signal: context?.signal });
     }
 
     case 'get_deskhub_skill':
-      return getDeskhubSkill(input.slug);
+      return getDeskhubSkill(input.slug, { signal: context?.signal });
 
     case 'get_umami_stats':
       return getUmamiStats(input.start_at, input.end_at);
@@ -396,26 +706,29 @@ export async function executeTool(name, input = {}, context = {}) {
     //  代笔写入（proxy_*）
     // ========================================================
     case 'proxy_create_plan': {
-      const user = assertProxyRole(context, 'admin');
+      const user = assertAbility(context, 'plan.write');
       const plan = createPlan({
         name: input.name, type: input.type,
         priority: input.priority || 'medium',
         desc: input.desc || '', owner: input.owner || user.username,
         deadline: input.deadline || '', related_skill: input.related_skill || '',
+        authorType: 'ai',
+        proxyAuthorId: user.username,
+        proxyMetadata: buildProxyMetadata(),
       });
       return { ok: true, plan_id: plan.id, authorType: 'ai', proxy_author_id: user.username,
         note: `工单已创建（小合代${user.username}创建，author_type=ai）` };
     }
 
     case 'proxy_edit_plan': {
-      const user = assertProxyRole(context, 'admin');
+      const user = assertAbility(context, 'plan.write');
       const { plan_id, ...fields } = input;
       editPlan(plan_id, fields);
       return { ok: true, plan_id, note: `工单已更新（小合代${user.username}编辑）` };
     }
 
     case 'proxy_add_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const v = addVariant(input.plan_id, {
         name: input.name,
         uploader: user.username,
@@ -431,7 +744,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_edit_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       // 校验：仅能改自己代笔的
       const detail = db.prepare('SELECT author_type, proxy_author_id, uploader FROM variants WHERE id = ?').get(input.variant_id);
       if (!detail) throw new Error('方案不存在');
@@ -444,7 +757,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_delete_variant': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM variants WHERE id = ?').get(input.variant_id);
       if (!detail) throw new Error('方案不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -455,7 +768,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_submit_scores': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const result = submitScores(input.variant_id, {
         tester: user.username,
         scores: input.scores,
@@ -470,7 +783,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_edit_score': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
       if (!detail) throw new Error('评分不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -482,7 +795,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_delete_score': {
-      const user = assertProxyRole(context, 'admin', 'tester');
+      const user = assertAbility(context, 'score.write');
       const detail = db.prepare('SELECT author_type, proxy_author_id FROM scores WHERE id = ?').get(input.score_id);
       if (!detail) throw new Error('评分不存在');
       if (detail.author_type !== 'ai' || detail.proxy_author_id !== user.username) {
@@ -492,10 +805,369 @@ export async function executeTool(name, input = {}, context = {}) {
       return { ok: true, score_id: input.score_id, note: '评分已删除' };
     }
 
+    // ========================================================
+    //  记忆工具
+    // ========================================================
+    case 'update_memory_section': {
+      assertAbility(context, 'memory.self');
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = upsertSection(loaded.content, {
+        section: input.section,
+        body: input.content,
+        segment: input.segment || 'public',
+      });
+      const sz = checkSizeLimit(updated);
+      if (sz.overHard) {
+        return { ok: false, error: {
+          category: 'invalid_input',
+          message: `记忆超过硬上限 ${MEMORY_SIZE_HARD_LIMIT} 字节（当前 ${sz.sizeBytes}），请先调 forget_memory_section 删点再写`,
+          retryable: false, tool: name,
+        } };
+      }
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return {
+        ok: true, section: input.section, segment: input.segment || 'public',
+        sizeBytes: saved.sizeBytes, overSoft: saved.overSoft,
+        note: saved.overSoft
+          ? `已更新段落「${input.section}」（${input.segment||'public'}），**记忆超软上限 ${MEMORY_SIZE_SOFT_LIMIT} 字节，下次写入前建议先整理冗余**`
+          : `已更新段落「${input.section}」（${input.segment||'public'}）`,
+      };
+    }
+
+    case 'append_memory_note': {
+      assertAbility(context, 'memory.self');
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = appendNote(loaded.content, {
+        note: input.note,
+        segment: input.segment || 'public',
+      });
+      const sz = checkSizeLimit(updated);
+      if (sz.overHard) {
+        return { ok: false, error: {
+          category: 'invalid_input',
+          message: `记忆超过硬上限 ${MEMORY_SIZE_HARD_LIMIT} 字节，请先清理`,
+          retryable: false, tool: name,
+        } };
+      }
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return { ok: true, segment: input.segment || 'public', sizeBytes: saved.sizeBytes,
+        note: `已追加笔记到「${input.segment || 'public'}」段` };
+    }
+
+    case 'forget_memory_section': {
+      assertAbility(context, 'memory.self');
+      const openId = context?.chatContext?.openId;
+      if (!openId) throw new Error('记忆工具需要当前对话 open_id');
+      const boundUser = context?.boundUser || null;
+      const loaded = await loadUserMemory(openId, boundUser);
+      const updated = removeSection(loaded.content, { section: input.section });
+      const saved = await saveUserMemory(openId, boundUser, updated);
+      return { ok: true, section: input.section, sizeBytes: saved.sizeBytes,
+        note: `已忘记「${input.section}」段落` };
+    }
+
+    // ========================================================
+    //  系统健康检查
+    // ========================================================
+    case 'get_system_health': {
+      assertAbility(context, 'system.health');
+      const mem = process.memoryUsage();
+      const mb = (n) => Math.round(n / 1024 / 1024 * 10) / 10;
+      const cpu = process.cpuUsage();
+
+      const planStats = db.prepare(`
+        SELECT status, COUNT(*) AS c FROM plans GROUP BY status
+      `).all();
+      const planCount = { total: 0, next: 0, active: 0, done: 0 };
+      for (const { status, c } of planStats) {
+        planCount[status] = c;
+        planCount.total += c;
+      }
+
+      const changes24h = db.prepare(`
+        SELECT COUNT(*) AS c FROM change_log WHERE datetime(created_at) >= datetime('now', '-1 day')
+      `).get().c;
+
+      return {
+        node: {
+          uptimeSeconds: Math.round(process.uptime()),
+          memoryMB: { rss: mb(mem.rss), heapUsed: mb(mem.heapUsed), heapTotal: mb(mem.heapTotal), external: mb(mem.external) },
+          cpuUserMs: Math.round(cpu.user / 1000),
+          cpuSystemMs: Math.round(cpu.system / 1000),
+          nodeVersion: process.version,
+        },
+        workbench: {
+          planCount,
+          changesLast24h: changes24h,
+          activeSessions: getActiveSessionCount(),
+        },
+        concurrency: getConcurrencyMetrics(),
+        now: beijingNowLine(),
+      };
+    }
+
+    // ========================================================
+    //  维度代笔
+    // ========================================================
+    case 'proxy_add_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      const dim = createDimension({ name: input.name, max: input.max ?? 10 });
+      return { ok: true, dimension: dim,
+        note: `维度「${dim.name}」已创建（id=${dim.id}，满分=${dim.max}，by ${user?.username}）` };
+    }
+
+    case 'proxy_edit_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      const { dimension_id, ...fields } = input;
+      editDimension(dimension_id, fields);
+      return { ok: true, dimension_id,
+        note: `维度 ${dimension_id} 已更新（by ${user?.username}）` };
+    }
+
+    case 'proxy_delete_dimension': {
+      const user = assertAbility(context, 'dimension.crud');
+      deleteDimension(input.dimension_id);
+      return { ok: true, dimension_id: input.dimension_id,
+        note: `维度 ${input.dimension_id} 已停用（软删除，历史评分保留；by ${user?.username}）` };
+    }
+
+    // ========================================================
+    //  巡检配置工具
+    // ========================================================
+    case 'get_patrol_config': {
+      assertAbility(context, 'patrol.config');
+      const cfg = getPatrolConfig();
+      return {
+        ...cfg,
+        _schema: Object.fromEntries(
+          Object.entries(PATROL_CONFIG_SCHEMA).map(([k, s]) => [k, { type: s.type, range: s.range, label: s.label }])
+        ),
+        _note: 'flush_ms 改后需 pm2 restart 才生效；其他热生效',
+      };
+    }
+
+    case 'update_patrol_config': {
+      const user = assertAbility(context, 'patrol.config');
+      const { key, value } = input;
+      const result = setPatrolConfig(key, value);
+      // 2026-04-22 改造后剩下的 3 个 key 全部热读 DB，无需重启
+      return {
+        ok: true, key, old: result.old, new: result.new,
+        hotReload: true,
+        note: `${PATROL_CONFIG_SCHEMA[key]?.label || key} 已改为 ${result.new}（by ${user?.username}），立即生效`,
+      };
+    }
+
+    // ========================================================
+    //  权限管理工具
+    // ========================================================
+    case 'grant_user_ability': {
+      const user = assertAbility(context, 'permissions.manage');
+      const { target_username, ability } = input;
+      if (!ABILITIES[ability]) {
+        throw new Error(`未定义的 ability "${ability}"，合法值：${ABILITY_NAMES.join(', ')}`);
+      }
+      const target = db.prepare('SELECT username FROM users WHERE username = ?').get(target_username);
+      if (!target) throw new Error(`目标用户 ${target_username} 不存在`);
+      // 越权校验：自己都没有的 ability 不能 grant 别人（admin 由 fallback 覆盖所有，不受影响）
+      if (!checkAbility(context, ability)) {
+        throw new Error(`无权授予你自己都没有的 ability "${ability}"`);
+      }
+      grantPermission(target_username, ability, user?.username || '');
+      return { ok: true, target_username, ability,
+        note: `已给 ${target_username} 授权 "${ability}"（by ${user?.username}）` };
+    }
+
+    case 'revoke_user_ability': {
+      const user = assertAbility(context, 'permissions.manage');
+      const { target_username, ability } = input;
+      if (!ABILITIES[ability]) {
+        throw new Error(`未定义的 ability "${ability}"`);
+      }
+      const removed = revokePermission(target_username, ability);
+      return { ok: true, target_username, ability, removed,
+        note: removed
+          ? `已撤销 ${target_username} 的 "${ability}"（角色 fallback 仍可能生效）`
+          : `${target_username} 没有显式授权 "${ability}"，无需撤销` };
+    }
+
+    case 'list_user_abilities': {
+      assertAbility(context, 'permissions.manage');
+      if (input.target_username) {
+        const grants = listUserPermissions(input.target_username);
+        return { target_username: input.target_username, grants,
+          note: `仅显式授权记录；角色 fallback 不显示在这里` };
+      }
+      const all = listAllPermissionGrants();
+      return { total: all.length, grants: all };
+    }
+
+    // ========================================================
+    //  通知钩子工具
+    // ========================================================
+    case 'propose_notification_hook': {
+      const user = assertAbility(context, 'hook.propose');
+      const { target_user, fire_at, message, source, plan_id, initial_status } = input;
+
+      // 校验 target 存在
+      const tgt = db.prepare('SELECT username FROM users WHERE username = ?').get(target_user);
+      if (!tgt) throw new Error(`目标用户 ${target_user} 不存在`);
+
+      // 校验 fire_at 是合法 ISO 8601 且带时区（+HH:MM / -HH:MM / Z）。
+      // 无时区字符串 new Date() 会按 UTC 解析，LLM 漏写 +08:00 会偷偷错 8 小时。
+      if (typeof fire_at !== 'string' || !/([+-]\d{2}:?\d{2}|Z)$/.test(fire_at.trim())) {
+        throw new Error(`fire_at 必须是带时区的 ISO 8601（示例 "2026-04-25T09:00:00+08:00"），收到 ${JSON.stringify(fire_at)}`);
+      }
+      const fireMs = new Date(fire_at).getTime();
+      if (!Number.isFinite(fireMs)) throw new Error(`fire_at 非法时间戳：${fire_at}`);
+      if (fireMs <= Date.now()) throw new Error(`fire_at 必须是未来时间（收到 ${fire_at}）`);
+
+      // 只有 admin 本人提议才能直接 active；LLM 代笔 / 系统巡检必须走 pending_confirm
+      const requested = initial_status || 'pending_confirm';
+      let status = requested;
+      let downgraded = false;
+      if (status === 'active' && user?.role !== 'admin') {
+        status = 'pending_confirm';
+        downgraded = true;
+      }
+
+      const hook = proposeHook({
+        planId: plan_id || null,
+        targetUser: target_user,
+        fireAt: fire_at,
+        message,
+        source,
+        createdBy: user?.username || 'ai',
+        initialStatus: status,
+      });
+
+      if (status === 'active') addHookToScheduler(hook.id);
+
+      const note = status === 'active'
+        ? `钩子 ${hook.id} 已直接激活（admin 本人提议），将在 ${fire_at} DM ${target_user}`
+        : downgraded
+          ? `⚠️ 你请求的 initial_status=active 已降级为 pending_confirm（仅 admin 本人可直接激活；当前 user.role=${user?.role || 'anon'}）。钩子 ${hook.id} 已提议，等 admin 确认后才真发 —— 别忘了 send_notification 提醒 admin。`
+          : `钩子 ${hook.id} 已提议，待 admin 确认后才会真发。DM admin 的确认请求由你下一步用 send_notification 发（或用户下次跟小合说话会看到 memory 里的 pending 列表）`;
+
+      return {
+        ok: true,
+        hook_id: hook.id,
+        status: hook.status,
+        downgraded,
+        note,
+      };
+    }
+
+    case 'confirm_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id } = input;
+      const hook = getHookById(hook_id);
+      if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+      if (hook.status !== 'pending_confirm') {
+        return { ok: false, hook_id, status: hook.status, note: `钩子 ${hook_id} 当前状态 ${hook.status}，不是 pending_confirm，无需确认` };
+      }
+      const ok = confirmHook(hook_id, user?.username || 'admin');
+      if (ok) addHookToScheduler(hook_id);
+      return { ok, hook_id, status: 'active', note: `钩子 ${hook_id} 已激活，将在 ${hook.fire_at} DM ${hook.target_user}` };
+    }
+
+    case 'modify_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id, fire_at, message, target_user } = input;
+      const hook = getHookById(hook_id);
+      if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+      if (!['pending_confirm', 'active'].includes(hook.status)) {
+        throw new Error(`钩子 ${hook_id} 当前状态 ${hook.status}，不可修改`);
+      }
+
+      const fields = {};
+      if (fire_at !== undefined) {
+        const fireMs = new Date(fire_at).getTime();
+        if (!Number.isFinite(fireMs)) throw new Error(`fire_at 非法：${fire_at}`);
+        if (fireMs <= Date.now()) throw new Error(`fire_at 必须是未来时间`);
+        fields.fire_at = fire_at;
+      }
+      if (message !== undefined) fields.message = message;
+      if (target_user !== undefined) {
+        const tgt = db.prepare('SELECT username FROM users WHERE username = ?').get(target_user);
+        if (!tgt) throw new Error(`目标用户 ${target_user} 不存在`);
+        fields.target_user = target_user;
+      }
+      if (Object.keys(fields).length === 0) throw new Error('没有提供可改字段');
+
+      modifyHook(hook_id, fields);
+
+      // active 状态下改 fire_at 要重挂 timer
+      if (hook.status === 'active' && fields.fire_at !== undefined) {
+        removeHookFromScheduler(hook_id);
+        addHookToScheduler(hook_id);
+      }
+
+      const updated = getHookById(hook_id);
+      return { ok: true, hook_id, status: updated.status, updated: fields,
+        note: `钩子 ${hook_id} 已更新（by ${user?.username}）` };
+    }
+
+    case 'cancel_notification_hook': {
+      const user = assertAbility(context, 'hook.manage');
+      const { hook_id, target_user, plan_id, date_ymd } = input;
+
+      // 精确模式
+      if (hook_id) {
+        const hook = getHookById(hook_id);
+        if (!hook) throw new Error(`钩子 ${hook_id} 不存在`);
+        if (!['pending_confirm', 'active'].includes(hook.status)) {
+          return { ok: false, hook_id, status: hook.status, note: `钩子 ${hook_id} 当前状态 ${hook.status}，无需取消` };
+        }
+        cancelHook(hook_id);
+        removeHookFromScheduler(hook_id);
+        return { ok: true, hook_id, status: 'cancelled', note: `钩子 ${hook_id} 已取消（by ${user?.username}）` };
+      }
+
+      // 模糊候选
+      if (!target_user && !plan_id && !date_ymd) {
+        throw new Error('需要 hook_id 精确取消，或提供 target_user/plan_id/date_ymd 做模糊候选');
+      }
+      const candidates = fuzzyMatchHook({ targetUser: target_user, planId: plan_id, dateYmd: date_ymd });
+      return {
+        ok: false,
+        mode: 'fuzzy_candidates',
+        candidates: candidates.map(c => ({
+          hook_id: c.id, target_user: c.target_user, fire_at: c.fire_at,
+          message: c.message, status: c.status, plan_id: c.plan_id,
+        })),
+        note: candidates.length === 0
+          ? '没有匹配的钩子'
+          : `找到 ${candidates.length} 个候选，请让用户指定具体 hook_id 再精确取消`,
+      };
+    }
+
+    case 'list_notification_hooks': {
+      assertAbility(context, 'hook.manage');
+      if (input.status) {
+        const hooks = listHooks({ status: input.status });
+        return { total: hooks.length, hooks };
+      }
+      const pending = listHooks({ status: 'pending_confirm' });
+      const active = listHooks({ status: 'active' });
+      return {
+        pending_count: pending.length,
+        active_count: active.length,
+        pending,
+        active,
+      };
+    }
+
     case 'get_deskhub_skill_file': {
       const { slug, path } = input;
       if (!slug || !path) throw new Error('slug 和 path 必填');
-      const result = await fetchDeskhubFile(slug, path);
+      const result = await fetchDeskhubFile(slug, path, { signal: context?.signal });
       return {
         slug, path,
         filename: result.filename,
@@ -534,7 +1206,7 @@ export async function executeTool(name, input = {}, context = {}) {
     }
 
     case 'proxy_upload_file': {
-      const user = assertProxyRole(context, 'admin', 'tester', 'member');
+      const user = assertAbility(context, 'variant.write');
       const { writeFileSync, mkdirSync } = await import('fs');
       const { dirname, join } = await import('path');
       const { fileURLToPath } = await import('url');

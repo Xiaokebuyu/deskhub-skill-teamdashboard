@@ -30,8 +30,8 @@ import {
 } from './feishu.js';
 import { chat } from './llm.js';
 import { getSession, updateSession, startSessionCleanup } from './session.js';
-import { startChangeDetector } from './change-detector.js';
 import { startPatrol } from './patrol.js';
+import { startHookScheduler } from './hook-scheduler.js';
 import { enqueueMessage } from './concurrency.js';
 import { getUserByOpenId, bindFeishuUser } from '../mcp/db-ops.js';
 import {
@@ -54,6 +54,8 @@ import {
   buildHeaderTemplateProbeCard,
   HEADER_TEMPLATES,
 } from './_probe-cards.js';
+import { shouldDegrade, summarizeDegrade, logDegrade, buildDegradeCard } from './degrade.js';
+import { migrateAnonToUser } from './memory/index.js';
 
 const THROTTLE_MS = 300;
 const FLUSH_AT_CHARS = 30;
@@ -67,17 +69,24 @@ export async function startBot() {
     return;
   }
 
+  const chatRounds = Number(process.env.BOT_CHAT_MAX_ROUNDS) || 20;
+  const notifyRounds = Number(process.env.BOT_NOTIFY_MAX_ROUNDS) || 10;
+  const toolTimeout = Number(process.env.BOT_TOOL_TIMEOUT_MS) || 30000;
+  const sessionTtl = Number(process.env.BOT_SESSION_TTL_MS) || 30 * 60 * 1000;
+  const distillRounds = Number(process.env.BOT_DISTILL_MAX_ROUNDS) || 3;
+  console.log(`[Bot] chatMaxRounds=${chatRounds} notifyMaxRounds=${notifyRounds} toolTimeoutMs=${toolTimeout} sessionTtlMin=${sessionTtl/60000} distillMaxRounds=${distillRounds}`);
+
   startSessionCleanup();
 
   const feishuReady = await initFeishu(handleMessage);
 
-  startChangeDetector();
   startPatrol();
+  startHookScheduler();
 
   if (feishuReady) {
     console.log('[Bot] 飞书机器人已启动');
   } else {
-    console.log('[Bot] 变更检测已启动（飞书未配置，消息功能不可用）');
+    console.log('[Bot] 巡检/钩子调度已启动（飞书未配置，消息功能不可用）');
   }
 }
 
@@ -875,6 +884,13 @@ async function handleMessage(text, chatId, userId, chatType) {
     const [, username, password] = bindMatch;
     const result = bindFeishuUser(username, password, userId);
     if (result.ok) {
+      // 绑定成功 → 迁移 anon memory 到 user memory（失败不阻塞绑定反馈）
+      try {
+        const mig = await migrateAnonToUser(userId, username);
+        if (mig.migrated) console.log(`[Bot/Memory] anon→user 迁移: ${mig.from} → ${mig.to}`);
+      } catch (err) {
+        console.warn('[Bot/Memory] 绑定时 anon→user 迁移失败:', err.message);
+      }
       await createAndSendCard(receiveId, receiveIdType,
         buildSimpleCard(`绑定成功！你好 ${result.displayName}，以后工单有动态我会通知你。`,
           { level: 'success' }));
@@ -969,11 +985,30 @@ async function handleMessage(text, chatId, userId, chatType) {
 
     try {
       const { messages, toolLog } = getSession(userId);
-      const { text: reply, toolSummaries } = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId });
+      const result = await chat(text, messages, onProgress, boundUser, toolLog, { openId: userId, chatType });
+      const { text: reply, toolSummaries } = result;
       updateSession(userId, text, reply, toolSummaries);
+
+      // ── 降级检测：只做日志（文本降级已由 agent-loop 自产，streamer 已经把它渲染完）──
+      if (shouldDegrade(result)) {
+        const reason = summarizeDegrade(result);
+        logDegrade('chat', reason, {
+          userId, text: text.slice(0, 60),
+          toolCount: result.toolSteps?.length || 0,
+          errorCount: (result.toolSteps || []).filter(s => s.error).length,
+        });
+      }
     } catch (err) {
       console.error('[Bot] 消息处理错误:', err);
-      await streamer.onError('抱歉，我暂时无法处理请求，请稍后再试。').catch(() => {});
+      logDegrade('chat', 'uncaught', err);
+      // 外层 catch 到非业务异常 → 降级卡片（替换当前卡或补发）
+      try {
+        await createAndSendCard(receiveId, receiveIdType,
+          buildDegradeCard('uncaught', { toolSummaries: [] }));
+      } catch (cardErr) {
+        // 降级卡片也发失败 → 至少让 streamer 切到通用错误态
+        await streamer.onError('抱歉，我暂时无法处理请求，请稍后再试。').catch(() => {});
+      }
     }
   });
 

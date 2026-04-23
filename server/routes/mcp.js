@@ -1,63 +1,17 @@
 import { Router } from 'express';
 import { getCache, setCache } from '../middleware/cache.js';
 import { wrapResponse } from '../utils/meta.js';
+import { createMcpRpc } from '../mcp/mcp-rpc.js';
 
 const router = Router();
 const MCP_URL = () => process.env.MCP_ENDPOINT || 'http://127.0.0.1:18790/deskclaw/mcp';
 
-// --- Session 管理 ---
-let sessionId = null;
-
-/** MCP JSON-RPC 请求 */
-async function mcpCall(method, params = {}, id = Date.now()) {
-  // 如果没有 session，先 initialize
-  if (!sessionId) await initSession();
-
-  const res = await fetch(MCP_URL(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-      'Mcp-Session-Id': sessionId,
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', method, params, id }),
-  });
-
-  // session 过期，重新初始化
-  if (!res.ok && res.status === 400) {
-    sessionId = null;
-    await initSession();
-    return mcpCall(method, params, id + 1);
-  }
-
-  const text = await res.text();
-  // 解析 SSE 格式：找到 "data: {...}" 行
-  const dataLine = text.split('\n').find(l => l.startsWith('data: '));
-  if (!dataLine) throw new Error('Invalid MCP response');
-  return JSON.parse(dataLine.slice(6));
-}
-
-/** 初始化 MCP session */
-async function initSession() {
-  const res = await fetch(MCP_URL(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0', method: 'initialize', id: 1,
-      params: {
-        protocolVersion: '2025-03-26',
-        capabilities: {},
-        clientInfo: { name: 'teamboard-proxy', version: '1.0' },
-      },
-    }),
-  });
-  sessionId = res.headers.get('mcp-session-id');
-  if (!sessionId) throw new Error('MCP initialize failed: no session ID');
-  console.log('[mcp] Session acquired:', sessionId.slice(0, 8) + '...');
-}
+const { mcpCall } = createMcpRpc({
+  getUrl: MCP_URL,
+  clientInfo: { name: 'teamboard-proxy', version: '1.0' },
+  label: 'MCP',
+  onInit: (sid) => console.log('[mcp] Session acquired:', sid.slice(0, 8) + '...'),
+});
 
 // --- GET /api/proxy/mcp/tools --- 工具列表
 router.get('/tools', async (_req, res) => {

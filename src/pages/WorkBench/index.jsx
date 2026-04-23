@@ -256,7 +256,8 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
           onReopen={wo => ops.reopenPlan(wo.id)}
           onOpenVariantManager={openVarMgr}
           onEditScore={(data) => openScorePanel(data)}
-          onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />
+          onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)}
+          onEditPlan={(id, fields) => ops.editPlan(id, fields)} />
         {formUI()}
         {docReaderData && <DocReader show={showDocReader} onClose={closeDocReader} title={docReaderData.title} content={docReaderData.content} />}
         {fullWo && <ScorePanel show={showScorePanel} onClose={closeScorePanel} wo={fullWo} dims={dims}
@@ -568,7 +569,8 @@ export default function WorkBench({ plans, setPlans, role, user, token, dims, se
         onReopen={wo => ops.reopenPlan(wo.id)}
         onOpenVariantManager={openVarMgr}
         onEditScore={(data) => openScorePanel(data)}
-        onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)} />
+        onDeleteScore={(planId, variantId, scoreId) => ops.deleteScore(planId, variantId, scoreId)}
+        onEditPlan={(id, fields) => ops.editPlan(id, fields)} />
 
       {/* 表单 */}
       {formUI()}

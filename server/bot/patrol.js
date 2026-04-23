@@ -1,25 +1,33 @@
 /**
- * 定时巡检
- * 每天在配置时间扫描平台状态，发现异常则通知
+ * 每日巡检 → 钩子工厂
+ *
+ * 每天到 patrol_config.patrol_hour 时自动跑：
+ *   1. runPatrol() → LLM 扫异常产钩子草案 JSON
+ *   2. 逐条 proposeHook（source='patrol', pending_confirm, createdBy='ai'）
+ *   3. DM 唯一 admin 一条汇总卡，列清单 + 操作引导
+ *
+ * 不再发群通知、不再直接 DM individuals。admin 审批钩子后 scheduler 触发真正的 DM。
  */
 
 import { runPatrol } from './notify-llm.js';
-import { createAndSendCard, getFeishuOpenIds } from './feishu.js';
-import { buildPatrolCard, buildPersonalCard } from './card-templates.js';
-
-const PATROL_HOUR = Number(process.env.BOT_PATROL_HOUR) || 9;
+import { createAndSendCard } from './feishu.js';
+import { buildSimpleCard } from './card-templates.js';
+import { logDegrade } from './degrade.js';
+import { getPatrolConfigValue } from '../mcp/db-ops.js';
+import { proposeHook } from '../mcp/hooks-ops.js';
+import db from '../db/init.js';
 
 let checkTimer = null;
 let lastPatrolDate = '';
+let isPatrolling = false;  // 在飞状态防 60s tick 在 runPatrol 未完时重入
 
-/**
- * 启动巡检定时器
- */
+/** 启动巡检定时器 */
 export function startPatrol() {
-  // 每分钟检查是否到巡检时间
   checkTimer = setInterval(checkPatrolTime, 60_000);
   checkTimer.unref?.();
-  console.log(`[Patrol] 巡检定时器已启动（每天 ${PATROL_HOUR}:00）`);
+  const hour = getPatrolConfigValue('patrol_hour');
+  const enabled = getPatrolConfigValue('patrol_enabled');
+  console.log(`[Patrol] 巡检定时器已启动（patrol_hour=${hour}, enabled=${enabled}，热读 DB）`);
 }
 
 export function stopPatrol() {
@@ -33,50 +41,83 @@ async function checkPatrolTime() {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
 
-  if (now.getHours() !== PATROL_HOUR) return;
+  const enabled = getPatrolConfigValue('patrol_enabled');
+  if (enabled !== 1) return;
+  const patrolHour = getPatrolConfigValue('patrol_hour');
+  if (now.getHours() !== patrolHour) return;
   if (lastPatrolDate === today) return;
-  lastPatrolDate = today;
+  if (isPatrolling) return;  // 上一次 runPatrol 还没结束（LLM 慢），别重入
 
-  console.log('[Patrol] 开始每日巡检...');
+  isPatrolling = true;
+  console.log(`[Patrol] 开始每日巡检（hour=${patrolHour}）...`);
 
   try {
-    const decision = await runPatrol();
+    const { hooks, reasoning } = await runPatrol();
 
-    // 群聊通知
-    if (decision.group?.send && decision.group.message) {
-      const card = buildPatrolCard(decision.group.message, {
-        attentionCount: decision.individuals?.length || 0,
-      });
-      await sendToGroups(card);
+    if (hooks.length === 0) {
+      console.log(`[Patrol] 无异常：${reasoning}`);
+      lastPatrolDate = today;  // 成功但无异常也算今日已跑
+      return;
     }
 
-    // 个性化私聊
-    if (decision.individuals?.length > 0) {
-      const usernames = decision.individuals.map(i => i.username);
-      const mappings = getFeishuOpenIds(usernames);
-      const openIdMap = Object.fromEntries(mappings.map(m => [m.username, m.openId]));
-
-      for (const { username, message } of decision.individuals) {
-        const openId = openIdMap[username];
-        if (!openId) continue;
-        const card = buildPersonalCard(message);
-        await createAndSendCard(openId, 'open_id', card);
+    // 逐条写 pending_confirm 钩子
+    const created = [];
+    for (const h of hooks) {
+      try {
+        const hook = proposeHook({
+          planId: h.plan_id || null,
+          targetUser: h.target_user,
+          fireAt: h.fire_at,
+          message: h.message,
+          source: 'patrol',
+          createdBy: 'ai',
+          initialStatus: 'pending_confirm',
+        });
+        created.push(hook);
+      } catch (err) {
+        console.warn(`[Patrol] proposeHook 失败:`, err.message, h);
       }
     }
 
-    console.log(`[Patrol] 巡检完成: group=${decision.group?.send}, individuals=${decision.individuals?.length || 0}`);
+    if (created.length === 0) {
+      console.log(`[Patrol] LLM 产了 ${hooks.length} 条草案但全部 proposeHook 失败`);
+      lastPatrolDate = today;  // 全失败也不在本小时内一直重试刷屏
+      return;
+    }
+
+    // DM 唯一 admin 一条汇总卡
+    await sendSummaryToAdmin(created, reasoning);
+    console.log(`[Patrol] 完成：产 ${created.length}/${hooks.length} 条 pending_confirm 钩子`);
+    lastPatrolDate = today;  // 真正成功完成才置位 → 抛错下次 tick 会重试（本小时内）
   } catch (err) {
-    console.error('[Patrol] 巡检失败:', err.message);
+    logDegrade('patrol', 'run_failed', err);
+    // 不置 lastPatrolDate，让下一分钟 tick 重试；hour 切换后自然停止（最多 60 次尝试）
+  } finally {
+    isPatrolling = false;
   }
 }
 
-async function sendToGroups(card) {
-  const chatIds = (process.env.FEISHU_NOTIFY_CHAT_IDS || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+async function sendSummaryToAdmin(hooks, reasoning) {
+  const admins = db.prepare(
+    "SELECT username, feishu_open_id FROM users WHERE role = 'admin' AND feishu_open_id != ''"
+  ).all();
+  if (admins.length === 0) {
+    console.warn('[Patrol] 无可通知 admin（role=admin 且有 feishu 绑定）');
+    return;
+  }
 
-  for (const chatId of chatIds) {
-    await createAndSendCard(chatId, 'chat_id', card);
+  const lines = hooks.map(h =>
+    `• **${h.id}** → ${h.target_user}（${h.fire_at.slice(0, 16).replace('T', ' ')}）\n  ${h.message}`
+  ).join('\n\n');
+  const content = `今日巡检产出 ${hooks.length} 条钩子草案${reasoning ? `：${reasoning}` : ''}\n\n${lines}\n\n` +
+    `回复「h00x 行」逐条确认，「h00x 改 xxx」调整，「h00x 否」取消，「全部确认」一次性通过。`;
+  const card = buildSimpleCard(content, { level: 'info', title: '小合·巡检草案', subtitle: `${hooks.length} 条待确认` });
+
+  for (const { feishu_open_id } of admins) {
+    try {
+      await createAndSendCard(feishu_open_id, 'open_id', card);
+    } catch (err) {
+      console.error(`[Patrol] 发送巡检汇总给 ${feishu_open_id} 失败:`, err.message);
+    }
   }
 }

@@ -1,0 +1,4 @@
+# 记忆文件（per-user）不进 git —— 生产 DB 一样的数据性质
+user-*.md
+anon-*.md
+# _index.json 保留空壳作为目录存在标记；运行时会覆盖为实际内容

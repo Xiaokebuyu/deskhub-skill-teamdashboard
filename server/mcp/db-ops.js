@@ -7,20 +7,18 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import db from '../db/init.js';
-import { bus } from '../bot/event-bus.js';
 
 const uid = () => crypto.randomUUID().slice(0, 8);
 
 // ============================================================
-//  变更日志（飞书推送用）
+//  变更日志（审计用）
+// 2026-04-22 改造后：只写 DB 不再 bus.emit。通知走钩子系统，不再听变更
 // ============================================================
 
 export function logChange(entityType, entityId, action, summary, actor = '', priority = 'medium') {
   db.prepare(
     'INSERT INTO change_log (entity_type, entity_id, action, summary, actor, priority) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(entityType, entityId, action, summary, actor, priority);
-
-  bus.emit('change', { entityType, entityId, action, summary, actor, priority });
 }
 
 export function getRecentChanges(limit = 20) {
@@ -45,11 +43,20 @@ function parseJSON(str) {
 //  工单 (Plans)
 // ============================================================
 
-export function createPlan({ name, type, priority = 'medium', desc = '', status = 'next', owner = '', deadline = '', related_skill = '', attachment = '' }) {
+export function createPlan({
+  name, type, priority = 'medium', desc = '', status = 'next',
+  owner = '', deadline = '', related_skill = '', attachment = '',
+  authorType = 'human', proxyAuthorId = null, proxyMetadata = null,
+}) {
   if (!name || !type) throw new Error('name 和 type 必填');
   const id = 'p' + uid();
-  db.prepare(`INSERT INTO plans (id, name, type, status, priority, description, owner, deadline, related_skill, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, name, type, status, priority, desc, owner, deadline, related_skill, attachment);
+  const metaStr = proxyMetadata ? JSON.stringify(proxyMetadata) : null;
+  db.prepare(`INSERT INTO plans (
+    id, name, type, status, priority, description, owner, deadline, related_skill, attachment,
+    author_type, proxy_author_id, proxy_metadata
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, name, type, status, priority, desc, owner, deadline, related_skill, attachment,
+      authorType, proxyAuthorId, metaStr);
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
   logChange('plan', id, 'created', `创建工单「${name}」`, owner, priority);
   return {
@@ -57,6 +64,8 @@ export function createPlan({ name, type, priority = 'medium', desc = '', status 
     priority: plan.priority, created: fmtDate(plan.created_at),
     desc: plan.description, result: plan.result,
     owner: plan.owner || '', deadline: plan.deadline || '',
+    authorType: plan.author_type || 'human',
+    proxyAuthorId: plan.proxy_author_id || null,
   };
 }
 
@@ -76,7 +85,9 @@ export function editPlan(planId, fields) {
   if (plan) logChange('plan', planId, 'updated', `编辑工单「${plan.name}」`, '', plan.priority);
 }
 
-export function deletePlan(planId) {
+// 手动 DELETE 作为双保险：schema 已有 ON DELETE CASCADE + foreign_keys=ON，
+// 但万一 pragma 被关，显式三条 DELETE 仍能保证无孤儿。事务化防中途失败。
+const deletePlanTx = db.transaction((planId) => {
   const plan = db.prepare('SELECT name, priority, owner FROM plans WHERE id = ?').get(planId);
   const vids = db.prepare('SELECT id FROM variants WHERE plan_id = ?').all(planId).map(v => v.id);
   if (vids.length > 0) {
@@ -84,6 +95,11 @@ export function deletePlan(planId) {
   }
   db.prepare('DELETE FROM variants WHERE plan_id = ?').run(planId);
   db.prepare('DELETE FROM plans WHERE id = ?').run(planId);
+  return plan;
+});
+
+export function deletePlan(planId) {
+  const plan = deletePlanTx(planId);
   if (plan) logChange('plan', planId, 'deleted', `删除工单「${plan.name}」`, '', plan.priority);
 }
 
@@ -376,6 +392,114 @@ export function bindFeishuUser(username, password, openId) {
 
   db.prepare("UPDATE users SET feishu_open_id = ? WHERE username = ?").run(openId, username);
   return { ok: true, displayName: user.display_name || username, role: user.role };
+}
+
+// ============================================================
+//  巡检配置（R5）
+// ============================================================
+
+/** config 字段元信息——类型转换 + 校验 */
+const PATROL_CONFIG_SCHEMA = {
+  patrol_hour:         { type: 'int',    range: [0, 23], label: '巡检触发小时（0-23）' },
+  patrol_enabled:      { type: 'int',    range: [0, 1],  label: '巡检开关（0=关，1=开）' },
+  deadline_alert_days: { type: 'int',    range: [1, 30], label: 'deadline 预警阈值（天）' },
+};
+
+export const PATROL_CONFIG_KEYS = Object.keys(PATROL_CONFIG_SCHEMA);
+export { PATROL_CONFIG_SCHEMA };
+
+/** 读整个 config（值已转成目标类型） */
+export function getPatrolConfig() {
+  const rows = db.prepare('SELECT key, value FROM patrol_config').all();
+  const out = {};
+  for (const { key, value } of rows) {
+    const spec = PATROL_CONFIG_SCHEMA[key];
+    if (!spec) { out[key] = value; continue; }
+    out[key] = spec.type === 'int' ? Number(value) : value;
+  }
+  return out;
+}
+
+/** 读单 key（带类型转换） */
+export function getPatrolConfigValue(key) {
+  const row = db.prepare('SELECT value FROM patrol_config WHERE key = ?').get(key);
+  if (!row) return null;
+  const spec = PATROL_CONFIG_SCHEMA[key];
+  if (!spec) return row.value;
+  return spec.type === 'int' ? Number(row.value) : row.value;
+}
+
+/** 更新单 key（含类型/范围校验），返回 { ok, old, new } */
+export function setPatrolConfig(key, value) {
+  const spec = PATROL_CONFIG_SCHEMA[key];
+  if (!spec) throw new Error(`未知 patrol_config key "${key}"，合法值：${PATROL_CONFIG_KEYS.join(', ')}`);
+
+  let normalized;
+  if (spec.type === 'int') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      throw new Error(`${spec.label}：需要整数，收到 "${value}"`);
+    }
+    if (spec.range && (n < spec.range[0] || n > spec.range[1])) {
+      throw new Error(`${spec.label}：范围 ${spec.range[0]}-${spec.range[1]}，收到 ${n}`);
+    }
+    normalized = String(n);
+  } else {
+    normalized = String(value);
+  }
+
+  const old = getPatrolConfigValue(key);
+  db.prepare(`
+    INSERT INTO patrol_config (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `).run(key, normalized);
+  return { ok: true, key, old, new: spec.type === 'int' ? Number(normalized) : normalized };
+}
+
+// ============================================================
+//  ability 权限（R2）
+// ============================================================
+
+/** 查 user × ability 是否已授权（同步，better-sqlite3 prepare 缓存） */
+export function hasPermission(username, ability) {
+  if (!username || !ability) return false;
+  const row = db.prepare(
+    'SELECT 1 FROM permissions WHERE user_id = ? AND ability = ?'
+  ).get(username, ability);
+  return !!row;
+}
+
+/** 授权（幂等：已存在则更新 granted_by/granted_at） */
+export function grantPermission(username, ability, grantedBy = '') {
+  db.prepare(`
+    INSERT INTO permissions (user_id, ability, granted_by)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id, ability) DO UPDATE SET
+      granted_by = excluded.granted_by,
+      granted_at = datetime('now')
+  `).run(username, ability, grantedBy);
+}
+
+/** 撤销（不存在无副作用） */
+export function revokePermission(username, ability) {
+  const info = db.prepare(
+    'DELETE FROM permissions WHERE user_id = ? AND ability = ?'
+  ).run(username, ability);
+  return info.changes > 0;
+}
+
+/** 查某用户已授权的 ability 列表 */
+export function listUserPermissions(username) {
+  return db.prepare(
+    'SELECT ability, granted_at, granted_by FROM permissions WHERE user_id = ? ORDER BY ability'
+  ).all(username);
+}
+
+/** 查所有授权记录（管理员总览用） */
+export function listAllPermissionGrants() {
+  return db.prepare(
+    'SELECT user_id, ability, granted_at, granted_by FROM permissions ORDER BY user_id, ability'
+  ).all();
 }
 
 // ============================================================
