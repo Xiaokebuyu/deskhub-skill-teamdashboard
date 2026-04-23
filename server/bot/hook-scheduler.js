@@ -124,10 +124,15 @@ function scheduleOne(hook) {
   if (delay > 24 * 24 * 3600 * 1000) return;
 
   const t = setTimeout(async () => {
-    activeTimers.delete(hook.id);
-    const fresh = getHookById(hook.id);
-    if (fresh?.status === 'active') {
-      await fireHook(fresh);
+    // 先不 delete activeTimers：tick 用 !activeTimers.has 做互斥，
+    // 这期间 fireHook 的 createAndSendCard + markFired 不能被并发触发。
+    try {
+      const fresh = getHookById(hook.id);
+      if (fresh?.status === 'active') {
+        await fireHook(fresh);
+      }
+    } finally {
+      activeTimers.delete(hook.id);
     }
   }, delay);
   t.unref?.();
