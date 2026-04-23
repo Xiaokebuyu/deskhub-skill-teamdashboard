@@ -92,6 +92,9 @@ process.on('uncaughtException', (err) => {
 
 // --- 飞书 LLM 机器人 ---
 import { startBot } from './bot/index.js';
+import { stopHookScheduler } from './bot/hook-scheduler.js';
+import { stopSessionCleanup } from './bot/session.js';
+import { stopPatrol } from './bot/patrol.js';
 
 const server = app.listen(PORT, () => {
   console.log(`[server] DeskSkill API running on http://localhost:${PORT}`);
@@ -105,7 +108,11 @@ let shuttingDown = false;
 const shutdown = (signal) => {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[shutdown] ${signal} received, closing HTTP server...`);
+  console.log(`[shutdown] ${signal} received, stopping bot timers + closing HTTP...`);
+  // Bot 里的三个定时器先停，避免 HTTP close 期间 tick 再起新 fetch
+  try { stopHookScheduler(); } catch (e) { console.warn('[shutdown] stopHookScheduler 失败:', e.message); }
+  try { stopSessionCleanup(); } catch (e) { console.warn('[shutdown] stopSessionCleanup 失败:', e.message); }
+  try { stopPatrol(); } catch (e) { console.warn('[shutdown] stopPatrol 失败:', e.message); }
   server.closeIdleConnections?.();
   server.close(() => {
     console.log('[shutdown] HTTP server closed');
